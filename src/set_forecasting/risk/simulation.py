@@ -96,7 +96,7 @@ def risk_baseline_probabilities(frame):
             ids=[g.iloc[i][k] for k in KEYS+["PERIOD","SCENARIO_ID"]]
             for name,p in {"Static":p_static,"RollingQuantile":p_roll,"EWMA":p_ewma,
                            "ACI":p_aci,"MonteCarlo":p_mc,"WassersteinDRO":p_dro}.items():
-                rec=dict(zip(KEYS+["PERIOD","SCENARIO_ID"],ids));rec.update(METHOD=name,SHORTAGE_PROBABILITY=float(np.clip(p,0,1)));rows.append(rec)
+                rec=dict(zip(KEYS+["PERIOD","SCENARIO_ID"],ids));rec.update(METHOD=name,SHORTAGE_PROBABILITY=float(np.clip(p,0,1)),SPLIT=g.iloc[i].get("SPLIT","test"));rows.append(rec)
     return pd.DataFrame(rows)
 
 def brier_by_method(probabilities,inventory):
@@ -128,3 +128,23 @@ def series_bootstrap_holm(probabilities,inventory,n_boot=2000,seed=42):
         results[idx]["SIGNIFICANT_WIN"]=bool(running<.05 and results[idx]["CI_UPPER"]<0)
         results[idx]["SIGNIFICANT_LOSS"]=bool(running<.05 and results[idx]["CI_LOWER"]>0)
     return pd.DataFrame(results)
+
+def calibrate_risk_probabilities(probabilities,inventory,min_validation_rows=30):
+    """Fit per-scenario/method isotonic calibrators on validation labels only."""
+    from sklearn.isotonic import IsotonicRegression
+    keys=KEYS+["PERIOD","SCENARIO_ID"]
+    x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner",validate="many_to_one")
+    x["RAW_SHORTAGE_PROBABILITY"]=x.SHORTAGE_PROBABILITY
+    calibrated=[]
+    for (scenario,method),g in x.groupby(["SCENARIO_ID","METHOD"],sort=False):
+        train=g[g.SPLIT=="validation"] if "SPLIT" in g else g.iloc[0:0]
+        test=g[g.SPLIT=="test"] if "SPLIT" in g else g
+        if len(train)>=min_validation_rows and train.STOCKOUT_LABEL.nunique()==2:
+            model=IsotonicRegression(y_min=0.,y_max=1.,out_of_bounds="clip")
+            model.fit(train.SHORTAGE_PROBABILITY,train.STOCKOUT_LABEL)
+            test=test.copy();test["SHORTAGE_PROBABILITY"]=model.predict(test.SHORTAGE_PROBABILITY)
+            test["CALIBRATOR_STATUS"]="isotonic_validation"
+        else:
+            test=test.copy();test["CALIBRATOR_STATUS"]="identity_insufficient_validation"
+        calibrated.append(test)
+    return pd.concat(calibrated,ignore_index=True) if calibrated else x.iloc[0:0]
