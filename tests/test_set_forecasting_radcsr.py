@@ -9,11 +9,21 @@ from src.set_forecasting.risk.simulation import make_scenarios,simulate_inventor
 KEYS=["ODS_CODE","VMP_SNOMED_CODE","UNIT_OF_MEASURE_IDENTIFIER"]
 
 def sample(n=36):
+    """Build a deterministic fixture with exactly n rows and valid split labels."""
+    if n < 3:
+        raise ValueError("sample fixture requires at least 3 rows for train/validation/test")
     x={k:[v]*n for k,v in zip(KEYS,["ORG01","000123","U1"])}
-    y=np.array([10,12,0,11,14,9]*6,dtype=float)
+    pattern=np.array([10,12,0,11,14,9],dtype=float)
+    y=np.resize(pattern,n)
+    train_end=max(1,int(n*.60))
+    validation_end=max(train_end+1,int(n*.80))
+    validation_end=min(validation_end,n-1)
+    splits=(["train"]*train_end +
+            ["validation"]*(validation_end-train_end) +
+            ["test"]*(n-validation_end))
     x.update(PERIOD=pd.date_range("2023-01-01",periods=n,freq="MS"),
       MODEL_DEMAND=y,OBSERVATION_MISSING=[False]*n,
-      SPLIT=["train"]*21+["validation"]*7+["test"]*8,
+      SPLIT=splits,
       POSITIVE_QUANTITY=y,TOTAL_INDICATIVE_COST=y*2)
     return pd.DataFrame(x)
 
@@ -52,7 +62,7 @@ def test_radcsr_monotone_probability_for_fixed_case():
     assert audit["raw_pass"]
     assert audit["gate_status"] == "PASS"
 
-def test_seven_scenarios_are_isolated_and_inventory_is_simulated():
+def test_nine_scenarios_are_isolated_and_inventory_is_simulated():
     x=sample().tail(10).copy()
     x["Q10"]=x.MODEL_DEMAND*.8;x["Q50"]=x.MODEL_DEMAND;x["Q90"]=x.MODEL_DEMAND*1.2
     x["R_REL"]=.2;x["R_E"]=.1;x["R_B"]=.1;x["R_C"]=.1;x["R_D"]=0
