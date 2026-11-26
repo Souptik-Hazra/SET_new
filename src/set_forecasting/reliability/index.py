@@ -1,7 +1,10 @@
-"""Prequential four-signal RADCSR reliability index.
+"""Prequential four-signal forecast-unreliability index.
 
+Higher values mean worse forecast reliability (greater error, bias, coverage
+miscalibration or drift). ``R_UNRELIABILITY`` is the canonical output column;
+``R_REL`` is retained as a backwards-compatible alias used by RADCSR.
 Q10/Q90 form a nominal central 80% interval. The coverage signal uses a separate
-past-only conformalised 90% interval around Q50 to match the 90% target.
+past-only conformalised interval around Q50 to match the configured target.
 """
 import numpy as np
 import pandas as pd
@@ -53,7 +56,8 @@ def build_reliability_index(predictions,target_coverage=.90,window=8,weights=Non
         g["CAL_LOWER_90"]=cal_lo;g["CAL_UPPER_90"]=cal_hi
         g["CAL_COVERED_90"]=cal_covered.astype("int8")
         g["R_E"]=re;g["R_B"]=rb;g["R_C"]=rc;g["R_D"]=rd
-        g["R_REL"]=np.clip(w["error"]*re+w["bias"]*rb+w["coverage"]*rc+w["drift"]*rd,0,1)
+        g["R_UNRELIABILITY"]=np.clip(w["error"]*re+w["bias"]*rb+w["coverage"]*rc+w["drift"]*rd,0,1)
+        g["R_REL"]=g["R_UNRELIABILITY"]  # Legacy alias: higher means less reliable.
         g["ROLLING_MAE_PRIOR"]=mae;g["ROLLING_BIAS_PRIOR"]=bias;g["ROLLING_COVERAGE_PRIOR"]=coverage
         shift=np.zeros(n,dtype=bool)
         for t in range(2*window,n):
