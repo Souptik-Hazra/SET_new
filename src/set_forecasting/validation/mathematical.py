@@ -99,7 +99,7 @@ def signal_perturbations():
  def last(x): return build_reliability_index(x,window=8).iloc[-1]
  base.loc[35,"MODEL_DEMAND"]=120.; b=last(base); under=base.copy(); under.loc[32:,"MODEL_DEMAND"]+=30
  over=base.copy(); over.loc[32:,"MODEL_DEMAND"]-=30
- noisy=base.copy(); noisy.loc[31:,"MODEL_DEMAND"]=100.+np.array([20,40,80,160,320,640,1280,2560])
+ noisy=base.copy(); noisy.loc[31:38,"MODEL_DEMAND"]=100.+np.array([20,40,80,160,320,640,1280,2560])
  wide=base.copy(); wide["Q10"]=70.; wide["Q90"]=130.
  isolated=base.copy(); isolated.loc[38,"MODEL_DEMAND"]+=0.1
  u,o,v,w,d=map(last,(under,over,noisy,wide,isolated))
