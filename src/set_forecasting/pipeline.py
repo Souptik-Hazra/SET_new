@@ -121,9 +121,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     test_joined=joined[joined.SPLIT=="test"]
     if test_joined.empty:
         raise RuntimeError("No held-out test rows available for RADCSR monotonicity acceptance gate.")
-    mono_cfg = dict(kappa_sigma=float(risk_cfg.get("kappa_sigma", .75)),
-                    kappa_mu=float(risk_cfg.get("kappa_mu", .50)),
-                    kappa_l=float(risk_cfg.get("kappa_l", 1.5)),
+    mono_cfg = dict(ks=float(risk_cfg.get("kappa_sigma", .75)),
+                    km=float(risk_cfg.get("kappa_mu", .50)),
+                    kl=float(risk_cfg.get("kappa_l", 1.5)),
                     horizon_cap=risk_cfg.get("horizon_cap", 2.0))
     audit_rows=[]
     audit_sample=test_joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False).head(1)
