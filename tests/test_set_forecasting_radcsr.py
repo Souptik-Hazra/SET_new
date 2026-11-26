@@ -49,7 +49,8 @@ def test_radcsr_monotone_probability_for_fixed_case():
       np.repeat(15.,len(r)),np.repeat(2.,len(r)),r)
     assert out.RADCSR_PROBABILITY.is_monotonic_increasing
     audit=monotonicity_audit(8,10,13,15,2)
-    assert audit["raw_pass"]\n    assert audit["gate_status"] == "PASS"
+    assert audit["raw_pass"]
+    assert audit["gate_status"] == "PASS"
 
 def test_seven_scenarios_are_isolated_and_inventory_is_simulated():
     x=sample().tail(10).copy()
