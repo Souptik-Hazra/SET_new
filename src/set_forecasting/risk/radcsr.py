@@ -70,10 +70,18 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
                        horizon_cap=2.0, grid_size=101):
     """Return a monotone reliability-conditioned risk score in [0, 1].
 
-    RADCSR_PROBABILITY is a monotone uplift transform of the baseline tail,
-    not the tail of the adjusted distribution. The latter is exported separately
-    as RADCSR_DISTRIBUTION_PROBABILITY. Validation-only calibration is required
-    before interpreting the uplift as a probability.
+    RADCSR_DISTRIBUTION_PROBABILITY is the adjusted normal tail. Its mean
+    shift and horizon extension operate only when A < mu_L; the mean is capped
+    at availability both before and after horizon scaling. When A >= mu_L,
+    only sigma widens. This removes the mean-overshoot reversal observed at
+    commit e0826409.
+
+    RADCSR_PROBABILITY is a separate monotone uplift toward 0.5:
+    p_adj + (0.5 - p_adj) * (1 - exp(-S)), where
+    S=log(1+kappa_sigma*R_rel)
+      + I(A<mu_L)*(log(1+kappa_mu*R_rel)+log(L_eff/L)).
+    It is not the adjusted-distribution tail. Validation-only calibration
+    and held-out evaluation are required before probability interpretation.
     """
     values = [np.asarray(v, dtype=float) for v in
               (q10, q50, q90, availability, lead_time, r_rel)]
