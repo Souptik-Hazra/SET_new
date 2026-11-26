@@ -52,7 +52,7 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
     values = [np.asarray(v, dtype=float) for v in
               (q10, q50, q90, availability, lead_time, r_rel)]
     q10, q50, q90, availability, lead_time, reliability = np.broadcast_arrays(*values)
-    if np.any(~np.isfinite(np.stack(values))):
+    if any(np.any(~np.isfinite(v)) for v in (q10, q50, q90, availability, lead_time, reliability)):
         raise ValueError("RADCSR inputs must be finite")
     if np.any((reliability < 0) | (reliability > 1)):
         raise ValueError("R_REL must be within [0, 1]")
