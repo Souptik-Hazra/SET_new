@@ -213,6 +213,10 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "inventory_rows":len(inventory),"risk_probability_rows":len(raw_probabilities),
       "calibrated_test_probability_rows":len(calibrated),
       "calibrator_status_counts":calibrated.CALIBRATOR_STATUS.value_counts().to_dict(),
+      "probability_semantics":{
+          "RADCSR_DISTRIBUTION_PROBABILITY":"1-Phi((A-mu_eff)/sigma_eff), where mu_eff=(mu+I(A<mu)*mu*kappa_mu*R_rel)*(L_eff/L), sigma_eff=sigma*(1+kappa_sigma*R_rel)*sqrt(L_eff/L), L_eff=min(L*(1+kappa_l*R_rel), horizon_cap*L).",
+          "RADCSR_PROBABILITY":"p0+(1-p0)*(1-exp(-S)); p0=1-Phi((A-mu)/sigma); S=log(1+kappa_sigma*R_rel)+log(1+kappa_mu*R_rel*I(A<mu))+log(max(L_eff/L,1)). This is a monotone risk-uplift score, not the adjusted-distribution tail; validation calibration and held-out evaluation are required."
+      },
       "signal_correlations_above_0_70":high_corr,"mean_unreliability_by_test_scenario":mean_unreliability,
       "stress_unreliability_increase_vs_stable":{k:float(v-mean_unreliability.get("S1_Stable",0)) for k,v in mean_unreliability.items()},
       "monotonicity_audit":{k:v for k,v in mono.items() if k!="cases"},
