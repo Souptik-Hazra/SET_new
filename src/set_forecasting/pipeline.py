@@ -65,7 +65,12 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             kappa_l=float(risk_cfg.get("kappa_l",1.5)))
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
-        ab=radcsr_ablations(g).reset_index(drop=True)
+        ab=radcsr_ablations(g,
+            kappa_sigma=float(risk_cfg.get("kappa_sigma",.75)),
+            kappa_mu=float(risk_cfg.get("kappa_mu",.50)),
+            kappa_l=float(risk_cfg.get("kappa_l",1.5)),
+            horizon_cap=risk_cfg.get("horizon_cap",2.0),
+            weights=rel_cfg.get("weights")).reset_index(drop=True)
         ablation_rows.append(pd.concat([g[keys+["SPLIT"]].reset_index(drop=True),ab],axis=1))
     rad_df=pd.concat(rad,ignore_index=True);rad_df["METHOD"]="RADCSR"
     ablation_df=pd.concat(ablation_rows,ignore_index=True)
