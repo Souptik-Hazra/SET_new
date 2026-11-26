@@ -69,85 +69,154 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
 
 def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_path,
                          min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
-    agg = pd.read_parquet(aggregated_path)
+    """Build and persist the retained monthly cohort one series at a time.
+
+    Only the compact aggregated table is held in memory. Expanded monthly rows
+    are written incrementally, avoiding a second full-cohort DataFrame copy.
+    """
+    required = ["YEAR_MONTH"] + KEY + [
+        "VMP_PRODUCT_NAME", "UNIT_OF_MEASURE_NAME", "SOURCE_RECORDS",
+        "POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
+        "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS",
+        "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
+        "NEGATIVE_COST_RECORDS",
+    ]
+    agg = pd.read_parquet(aggregated_path, columns=required)
+    if agg.empty:
+        raise ValueError("Aggregated SCMD dataset is empty")
     agg["YEAR_MONTH"] = agg["YEAR_MONTH"].astype(str).str.strip()
     parsed = pd.to_datetime(agg["YEAR_MONTH"], format="%Y%m", errors="coerce")
     if parsed.isna().any():
-        raise ValueError(f"Invalid YEAR_MONTH values: {agg.loc[parsed.isna(), 'YEAR_MONTH'].unique()[:10]}")
+        bad = agg.loc[parsed.isna(), "YEAR_MONTH"].unique()[:10]
+        raise ValueError(f"Invalid YEAR_MONTH values: {bad}")
     agg["PERIOD"] = parsed
-    for col in ["POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY", "TOTAL_INDICATIVE_COST"]:
-        agg[col] = pd.to_numeric(agg[col], errors="coerce").fillna(0.0)
+    for col in KEY:
+        agg[col] = agg[col].astype("category")
+    numeric = [
+        "SOURCE_RECORDS", "POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
+        "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS", "INVALID_QUANTITY_RECORDS",
+        "MISSING_OR_INVALID_COST_RECORDS", "NEGATIVE_COST_RECORDS",
+    ]
+    for col in numeric:
+        agg[col] = pd.to_numeric(agg[col], errors="coerce")
+    if agg[numeric].isna().any().any():
+        raise ValueError("Aggregated SCMD table contains null or non-numeric measures")
 
-    # Aggregated table is unique on month + organisation + VMP + unit.
     business_key = ["YEAR_MONTH"] + KEY
     duplicate_count = int(agg.duplicated(business_key).sum())
     if duplicate_count:
         raise ValueError(f"Aggregated business key is not unique: {duplicate_count:,} duplicates")
 
-    # Build an explicit monthly calendar per series; absence is not asserted to be zero demand.
     from pyarrow import Table
     from pyarrow.parquet import ParquetWriter
     series_path = Path(series_path)
     series_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_series_path = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
+    temporary_series_path.unlink(missing_ok=True)
     batch_frames = []
     writer = None
+    cohort_rows = []
+    retained_missing_periods = 0
+    retained_series = 0
     batch_size = 250
-    for key_values, group in agg.groupby(KEY, sort=False, dropna=False):
+
+    for key_values, group in agg.groupby(KEY, sort=False, dropna=False, observed=True):
         group = group.sort_values("PERIOD").copy()
         months = pd.date_range(group["PERIOD"].min(), group["PERIOD"].max(), freq="MS")
         indexed = group.set_index("PERIOD").reindex(months)
         indexed.index.name = "PERIOD"
         for col, value in zip(KEY, key_values):
-            indexed[col] = value
+            indexed[col] = str(value)
         indexed["OBSERVATION_MISSING"] = indexed["SOURCE_RECORDS"].isna()
         indexed["SOURCE_RECORDS"] = indexed["SOURCE_RECORDS"].fillna(0).astype("int64")
-        for col in ["POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
-                    "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS",
-                    "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
-                    "NEGATIVE_COST_RECORDS"]:
-            indexed[col] = indexed[col].fillna(0)
+        for col in numeric[1:]:
+            indexed[col] = indexed[col].fillna(0.0)
         indexed["MODEL_DEMAND"] = indexed["POSITIVE_QUANTITY"]
         indexed["DEMAND_NET"] = indexed["NET_QUANTITY"]
         indexed["VMP_PRODUCT_NAME"] = indexed["VMP_PRODUCT_NAME"].ffill().bfill()
         indexed["UNIT_OF_MEASURE_NAME"] = indexed["UNIT_OF_MEASURE_NAME"].ffill().bfill()
         indexed["YEAR_MONTH"] = indexed.index.strftime("%Y%m")
-        batch_frames.append(indexed.reset_index())
+        indexed = indexed.reset_index()
+
+        observed = indexed.loc[~indexed["OBSERVATION_MISSING"]]
+        values = observed["MODEL_DEMAND"].to_numpy(dtype=float)
+        n_periods = len(indexed)
+        n_observed = len(observed)
+        n_nonzero = int((values > 0).sum())
+        missing_periods = int(indexed["OBSERVATION_MISSING"].sum())
+        reason = []
+        if n_periods < int(min_periods):
+            reason.append("insufficient_periods")
+        if n_nonzero < int(min_nonzero):
+            reason.append("insufficient_nonzero")
+        included = not reason
+
+        adi, cv2 = compute_adi_cv2(values)
+        q1 = observed["MODEL_DEMAND"].quantile(.25) if n_observed else np.nan
+        q3 = observed["MODEL_DEMAND"].quantile(.75) if n_observed else np.nan
+        upper_fence = q3 + 3.0 * (q3 - q1) if n_observed else np.nan
+        indexed["EXTREME_FLAG"] = indexed["MODEL_DEMAND"] > upper_fence
+        indexed["DEMAND"] = indexed["MODEL_DEMAND"].where(~indexed["OBSERVATION_MISSING"])
+        indexed["DEMAND_CLEAN"] = indexed["DEMAND"]
+
+        periods = indexed["PERIOD"].drop_duplicates().sort_values().tolist()
+        n_train = int(n_periods * float(train_frac))
+        n_val = int(n_periods * float(val_frac))
+        if n_train < 1 or n_val < 1 or n_train + n_val >= n_periods:
+            included = False
+            reason.append("insufficient_rows_for_three_way_split")
+        train_end = periods[n_train - 1] if n_train else pd.NaT
+        validation_end = periods[n_train + n_val - 1] if n_train + n_val else pd.NaT
+        test_start = periods[n_train + n_val] if n_train + n_val < n_periods else pd.NaT
+        indexed["TRAIN_END"] = train_end
+        indexed["VALIDATION_END"] = validation_end
+        indexed["TEST_START"] = test_start
+        indexed["SPLIT"] = np.select(
+            [indexed["PERIOD"] <= train_end, indexed["PERIOD"] <= validation_end],
+            ["train", "validation"], default="test"
+        )
+
+        cohort_rows.append(dict(
+            zip(KEY, map(str, key_values)),
+            N_PERIODS=n_periods, N_OBSERVED=n_observed,
+            N_MISSING_PERIODS=missing_periods, N_NONZERO=n_nonzero,
+            COHORT_INCLUDED=included, EXCLUSION_REASON=";".join(reason),
+            ADI=adi, CV2=cv2, DEMAND_CLASS=classify_demand(adi, cv2),
+            ZERO_PCT=float((values == 0).mean() * 100) if n_observed else None,
+            EXTREME_COUNT=int(indexed["EXTREME_FLAG"].sum()),
+        ))
+
+        if not included:
+            continue
+        retained_series += 1
+        retained_missing_periods += missing_periods
+        batch_frames.append(indexed)
         if len(batch_frames) >= batch_size:
-            batch = pd.concat(batch_frames, ignore_index=True).sort_values(KEY + ["PERIOD"])
+            batch = pd.concat(batch_frames, ignore_index=True)
             table = Table.from_pandas(batch, preserve_index=False)
             if writer is None:
-                writer = ParquetWriter(series_path, table.schema, compression="zstd")
+                writer = ParquetWriter(temporary_series_path, table.schema, compression="zstd")
             writer.write_table(table)
             batch_frames.clear()
+
     if batch_frames:
-        batch = pd.concat(batch_frames, ignore_index=True).sort_values(KEY + ["PERIOD"])
+        batch = pd.concat(batch_frames, ignore_index=True)
         table = Table.from_pandas(batch, preserve_index=False)
         if writer is None:
-            writer = ParquetWriter(series_path, table.schema, compression="zstd")
+            writer = ParquetWriter(temporary_series_path, table.schema, compression="zstd")
         writer.write_table(table)
     if writer is not None:
         writer.close()
-        series = pd.read_parquet(series_path)
-        series = series.sort_values(KEY + ["PERIOD"]).reset_index(drop=True)
+        temporary_series_path.replace(series_path)
     else:
-        series = pd.DataFrame()
+        temporary_series_path.unlink(missing_ok=True)
+        raise ValueError(
+            "No SCMD series met cohort and chronological split requirements; "
+            "review min_periods, min_nonzero and split fractions."
+        )
 
-    # Cohort statistics and exclusion reasons; count missing periods separately.
-    stats = []
-    for key_values, group in series.groupby(KEY, sort=False):
-        observed = group.loc[~group["OBSERVATION_MISSING"]]
-        n_periods = len(group)
-        n_nonzero = int((observed["MODEL_DEMAND"] > 0).sum())
-        missing_periods = int(group["OBSERVATION_MISSING"].sum())
-        reason = []
-        if n_periods < min_periods: reason.append("insufficient_periods")
-        if n_nonzero < min_nonzero: reason.append("insufficient_nonzero")
-        stats.append(dict(zip(KEY, key_values), N_PERIODS=n_periods,
-                          N_OBSERVED=int(len(observed)), N_MISSING_PERIODS=missing_periods,
-                          N_NONZERO=n_nonzero, COHORT_INCLUDED=not reason,
-                          EXCLUSION_REASON=";".join(reason)))
-    cohort = pd.DataFrame(stats)
-    monthly_summary = agg.groupby("YEAR_MONTH", as_index=False).agg(
+    cohort = pd.DataFrame(cohort_rows)
+    monthly_summary = agg.groupby("YEAR_MONTH", as_index=False, observed=True).agg(
         SOURCE_RECORDS=("SOURCE_RECORDS", "sum"),
         POSITIVE_QUANTITY=("POSITIVE_QUANTITY", "sum"),
         NEGATIVE_QUANTITY=("NEGATIVE_QUANTITY", "sum"),
@@ -161,79 +230,51 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         monthly_summary["TOTAL_INDICATIVE_COST"] >
         monthly_summary["TOTAL_INDICATIVE_COST"].median() * 2.0
     )
-    included = cohort.loc[cohort["COHORT_INCLUDED"], KEY]
-    series = series.merge(included.assign(_included=True), on=KEY, how="inner")
-    # Keep absent calendar months missing; zero is only valid for an observed source month.
-    series["DEMAND"] = series["MODEL_DEMAND"].where(~series["OBSERVATION_MISSING"])
-
-    # Flag high values, do not automatically winsorise genuine demand events.
-    q = series.groupby(KEY)["DEMAND"]
-    q1 = q.transform(lambda x: x.quantile(.25))
-    q3 = q.transform(lambda x: x.quantile(.75))
-    series["EXTREME_FLAG"] = series["DEMAND"] > (q3 + 3.0 * (q3 - q1))
-    series["DEMAND_CLEAN"] = series["DEMAND"]
-
-    # Correct intermittent-demand diagnostics use positive sizes for CV².
-    diagnostics = []
-    for key_values, group in series.groupby(KEY, sort=False):
-        observed = group.loc[~group["OBSERVATION_MISSING"]]
-        values = observed["MODEL_DEMAND"].to_numpy(dtype=float)
-        adi, cv2 = compute_adi_cv2(values)
-        diagnostics.append(dict(zip(KEY, key_values), N_PERIODS=len(group),
-            N_OBSERVED=len(observed), N_NONZERO=int((values > 0).sum()),
-            ADI=adi, CV2=cv2, DEMAND_CLASS=classify_demand(adi, cv2),
-            ZERO_PCT=float((values == 0).mean() * 100) if len(values) else None,
-            EXTREME_COUNT=int(group["EXTREME_FLAG"].sum())))
-    demand_diagnostics = pd.DataFrame(diagnostics)
-    cohort = cohort.merge(demand_diagnostics[KEY + ["ADI","CV2","DEMAND_CLASS","ZERO_PCT","EXTREME_COUNT"]],
-                          on=KEY, how="left")
-
-    # Per-series chronological 60/20/20 split, preserving row-level period assignments.
-    split_rows = []
-    for key_values, group in series.groupby(KEY, sort=False):
-        periods = group["PERIOD"].drop_duplicates().sort_values().tolist()
-        n = len(periods)
-        n_train = int(n * train_frac)
-        n_val = int(n * val_frac)
-        train_end = periods[max(0, n_train - 1)] if n_train else None
-        val_end = periods[min(n - 1, n_train + n_val - 1)] if n_train + n_val else None
-        split_rows.append(dict(zip(KEY, key_values), TRAIN_END=train_end,
-                               VALIDATION_END=val_end, TEST_START=(periods[n_train+n_val] if n_train+n_val < n else pd.NaT)))
-    split_map = pd.DataFrame(split_rows)
-    series = series.merge(split_map, on=KEY, how="left")
-    series["SPLIT"] = np.select(
-        [series["PERIOD"] <= series["TRAIN_END"],
-         series["PERIOD"] <= series["VALIDATION_END"]],
-        ["train", "validation"], default="test")
-
-    Path(series_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cohort_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
     cohort.to_csv(cohort_path, index=False)
     monthly_summary.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
+
     report = {
-      "source": "NHSBSA Secondary Care Medicines Indicative Price",
-      "granularity": "monthly",
-      "date_range": {"start": str(series["PERIOD"].min().date()) if len(series) else None,
-                     "end": str(series["PERIOD"].max().date()) if len(series) else None},
-      "aggregated_rows": int(len(agg)), "global_duplicate_business_keys": duplicate_count,
-      "monthly_cost_anomaly_months": monthly_summary.loc[monthly_summary["COST_ANOMALY_FLAG"], "YEAR_MONTH"].tolist(),
-      "series_count_before_filter": int(len(cohort)),
-      "series_retained": int(cohort["COHORT_INCLUDED"].sum()),
-      "series_excluded": int((~cohort["COHORT_INCLUDED"]).sum()),
-      "missing_month_observations_in_retained_cohort": int(series["OBSERVATION_MISSING"].sum()),
-      "negative_quantity_total": float(agg["NEGATIVE_QUANTITY"].sum()),
-      "positive_quantity_total": float(agg["POSITIVE_QUANTITY"].sum()),
-      "invalid_quantity_records": int(agg["INVALID_QUANTITY_RECORDS"].sum()),
-      "missing_or_invalid_cost_records": int(agg["MISSING_OR_INVALID_COST_RECORDS"].sum()),
-      "negative_cost_records": int(agg["NEGATIVE_COST_RECORDS"].sum()),
-      "demand_class_distribution": cohort.loc[cohort["COHORT_INCLUDED"], "DEMAND_CLASS"].value_counts().to_dict(),
-      "disclaimer": DISCLAIMER,
-      "note": "Missing month rows are flagged, not silently interpreted as observed zero demand. Model demand currently uses positive quantity; net and negative movements remain available separately."
+        "source": "NHSBSA Secondary Care Medicines Indicative Price",
+        "granularity": "monthly",
+        "date_range": {
+            "start": str(pd.to_datetime(agg["PERIOD"]).min().date()),
+            "end": str(pd.to_datetime(agg["PERIOD"]).max().date()),
+        },
+        "aggregated_rows": int(len(agg)),
+        "global_duplicate_business_keys": duplicate_count,
+        "monthly_cost_anomaly_months": monthly_summary.loc[
+            monthly_summary["COST_ANOMALY_FLAG"], "YEAR_MONTH"
+        ].tolist(),
+        "series_count_before_filter": int(len(cohort)),
+        "series_retained": int(retained_series),
+        "series_excluded": int((~cohort["COHORT_INCLUDED"]).sum()),
+        "missing_month_observations_in_retained_cohort": int(retained_missing_periods),
+        "negative_quantity_total": float(agg["NEGATIVE_QUANTITY"].sum()),
+        "positive_quantity_total": float(agg["POSITIVE_QUANTITY"].sum()),
+        "invalid_quantity_records": int(agg["INVALID_QUANTITY_RECORDS"].sum()),
+        "missing_or_invalid_cost_records": int(agg["MISSING_OR_INVALID_COST_RECORDS"].sum()),
+        "negative_cost_records": int(agg["NEGATIVE_COST_RECORDS"].sum()),
+        "demand_class_distribution": cohort.loc[
+            cohort["COHORT_INCLUDED"], "DEMAND_CLASS"
+        ].value_counts().to_dict(),
+        "memory_strategy": (
+            "Read only required aggregate columns, encode business keys categorically, "
+            "expand and persist retained monthly series in bounded batches; do not reload "
+            "the complete expanded cohort into pandas."
+        ),
+        "disclaimer": DISCLAIMER,
+        "note": (
+            "Missing month rows are flagged, not silently interpreted as observed zero demand. "
+            "Model demand currently uses positive quantity; net and negative movements remain "
+            "available separately. The final persisted Parquet contains the retained cohort "
+            "and chronological SPLIT assignments."
+        ),
     }
-    with open(diagnostics_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, default=str)
-    return series, cohort, report
+    with open(diagnostics_path, "w", encoding="utf-8") as stream:
+        json.dump(report, stream, indent=2, default=str)
+    return pd.read_parquet(series_path), cohort, report
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
