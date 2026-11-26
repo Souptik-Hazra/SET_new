@@ -19,7 +19,10 @@ radcsr:
   kappa_sigma: 0.75
   kappa_mu: 0.50
   kappa_l: 1.50
-  monotone_envelope: true
+  horizon_cap: 2.0
+  monotonicity_gate: true
+  monotonicity_tolerance: 1.0e-10
+  probability_adjustment: analytic_monotone_risk_uplift
 inventory:
   outcomes_are_simulated: true
   initial_cover_months: 2
