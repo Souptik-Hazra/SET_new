@@ -16,6 +16,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 import pytest
+
+pytestmark = pytest.mark.legacy
 import numpy as np
 import pandas as pd
 from src.evaluation.metrics import mae, rmse, wape, pinball_loss, picp, mpiw
