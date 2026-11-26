@@ -10,9 +10,13 @@ DISCLAIMER = ("SCMD contains no observed stock, lead time or stockout events. "
 
 def infer_lead_time_distribution(q10, q50, q90, lead):
     q10, q50, q90 = [np.maximum(0, np.asarray(v, dtype=float)) for v in (q10, q50, q90)]
-    if np.any(q10 > q50) or np.any(q50 > q90):
-        raise ValueError("Require Q10 <= Q50 <= Q90")
-    lead = np.maximum(np.asarray(lead, dtype=float), 1.0)
+    if any(np.any(~np.isfinite(v)) for v in (q10, q50, q90, np.asarray(lead, dtype=float))):
+        raise ValueError("Quantiles and lead time must be finite")
+    if np.any(q10 < 0) or np.any(q10 > q50) or np.any(q50 > q90):
+        raise ValueError("Require 0 <= Q10 <= Q50 <= Q90")
+    lead = np.asarray(lead, dtype=float)
+    if np.any(lead <= 0):
+        raise ValueError("Lead time must be strictly positive")
     mu = q50 * lead
     sigma = np.maximum((q90 - q10) / 2.563, 1e-6) * np.sqrt(lead)
     return mu, sigma
@@ -44,10 +48,12 @@ def _adjusted_distribution(q10, q50, q90, availability, lead, reliability,
 def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
                        kappa_sigma=0.75, kappa_mu=0.50, kappa_l=1.5,
                        horizon_cap=2.0, grid_size=101):
-    """Return a naturally monotone reliability-conditioned probability.
+    """Return a monotone reliability-conditioned risk score in [0, 1].
 
-    The uncertainty, conditional-mean and horizon adjustments are non-negative
-    functions of unreliability. No post-hoc cumulative-max envelope is applied.
+    RADCSR_PROBABILITY is a monotone uplift transform of the baseline tail,
+    not the tail of the adjusted distribution. The latter is exported separately
+    as RADCSR_DISTRIBUTION_PROBABILITY. Validation-only calibration is required
+    before interpreting the uplift as a probability.
     """
     values = [np.asarray(v, dtype=float) for v in
               (q10, q50, q90, availability, lead_time, r_rel)]
@@ -56,8 +62,13 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
         raise ValueError("RADCSR inputs must be finite")
     if np.any((reliability < 0) | (reliability > 1)):
         raise ValueError("R_REL must be within [0, 1]")
-    if min(kappa_sigma, kappa_mu, kappa_l) < 0:
-        raise ValueError("RADCSR coefficients must be non-negative")
+    coefficients = np.asarray([kappa_sigma, kappa_mu, kappa_l], dtype=float)
+    if np.any(~np.isfinite(coefficients)) or np.any(coefficients < 0):
+        raise ValueError("RADCSR coefficients must be finite and non-negative")
+    if horizon_cap is not None and (not np.isfinite(float(horizon_cap)) or float(horizon_cap) < 1.0):
+        raise ValueError("horizon_cap must be finite and >= 1 or None")
+    if np.any(availability < 0):
+        raise ValueError("Availability must be non-negative")
     mu_eff, sigma_eff, mu, sigma, sigma_adj, mu_adj, lead_eff = _adjusted_distribution(
         q10, q50, q90, availability, lead_time, reliability,
         kappa_sigma, kappa_mu, kappa_l, horizon_cap)
@@ -70,8 +81,8 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
                 np.log1p(kappa_mu * reliability * (availability < mu)) +
                 np.log(np.maximum(lead_ratio, 1.0)))
     probability = baseline + (1.0 - baseline) * (1.0 - np.exp(-severity))
-    # Keep adjusted distribution visible for audit; the reported risk is the
-    # monotone RADCSR uplift uses the same capped effective-horizon ratio as the model.
+    # Keep the adjusted-distribution tail separate from the monotone uplift score.
+    # The score is calibrated downstream on validation labels only.
     probability = np.clip(probability, 0.0, 1.0)
     raw = np.asarray(adjusted, dtype=float)
     return pd.DataFrame({
