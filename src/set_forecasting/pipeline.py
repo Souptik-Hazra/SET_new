@@ -32,7 +32,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     reliability=build_reliability_index(pred)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
     intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
-    interval_summary=intervals.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
+    interval_test=intervals[intervals.SPLIT=="test"] if "SPLIT" in intervals else intervals
+    interval_summary=interval_test.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
     interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
     corr=reliability[["R_E","R_B","R_C","R_D"]].corr();corr.to_csv(out/"tables/reliability_signal_correlations.csv")
     high_corr=[]
