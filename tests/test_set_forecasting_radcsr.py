@@ -316,3 +316,17 @@ def test_calibration_metrics_exclude_censored_rows_and_report_metrics():
     assert result.loc[0, "N"] == 4
     assert 0 <= result.loc[0, "EXPECTED_CALIBRATION_ERROR"] <= 1
     assert result.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
+
+
+def test_inventory_sensitivity_grid_runs_on_shared_scenario_streams():
+    from src.set_forecasting.risk.simulation import inventory_sensitivity
+    x = sample(5).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = x.MODEL_DEMAND
+    x["Q10"] = 5.0; x["Q50"] = 10.0; x["Q90"] = 15.0
+    x["LEAD_TIME_MONTHS"] = 2
+    result = inventory_sensitivity(x, service_levels=(.95,),
+                                   initial_covers=(1., 2.), target_covers=(2.,))
+    assert len(result) == 2
+    assert set(result.INITIAL_COVER_MONTHS) == {1.0, 2.0}
+    assert set(result.OUTCOME_TYPE) == set() if "OUTCOME_TYPE" in result else True
