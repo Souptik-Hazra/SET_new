@@ -109,7 +109,7 @@ def test_probability_calibration_uses_validation_and_returns_test_only():
     assert out.SHORTAGE_PROBABILITY.between(0,1).all()
 
 def test_inventory_label_uses_realised_lead_time_demand():
-    x=sample(4)
+    x=sample(36).head(4).copy()
     x["Q10"]=1.;x["Q50"]=1.;x["Q90"]=1.
     x["SCENARIO_ID"]="S1_Stable";x["SCENARIO_DEMAND"]=[10.,10.,0.,0.]
     x["LEAD_TIME_MONTHS"]=2
