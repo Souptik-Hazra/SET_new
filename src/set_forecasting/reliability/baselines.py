@@ -26,6 +26,6 @@ def interval_baselines(predictions,target_coverage=.90,window=8):
             history.append(float(errors[i]))
         for name,pairs in methods.items():
             lo=np.array([p[0] for p in pairs]);hi=np.array([p[1] for p in pairs])
-            rows.append(g[KEYS+["PERIOD"]].assign(METHOD=name,LOWER=lo,UPPER=hi,
+            rows.append(g[KEYS+["PERIOD"]].assign(SPLIT=g.SPLIT.to_numpy() if "SPLIT" in g else "test",METHOD=name,LOWER=lo,UPPER=hi,
               COVERED=((y>=lo)&(y<=hi)).astype(int),WIDTH=hi-lo))
     return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
