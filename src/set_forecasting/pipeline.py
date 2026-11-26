@@ -7,7 +7,8 @@ from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
 from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
-from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,series_bootstrap_holm\nfrom .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
+from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,series_bootstrap_holm
+from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
     out=Path(output_dir);proc=Path(processed_dir)
@@ -15,18 +16,31 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     series=pd.read_parquet(series_path)
     features,pred,forecast_metrics,forecast_report=train_and_predict(series)
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
-    forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)\n    if len(features):\n        per_series=[]\n        for key,g in pred.groupby(KEYS,sort=False,dropna=False):\n            y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)\n            per_series.append(dict(zip(KEYS,key),N_TEST=len(g),WAPE=float(np.abs(y-q).sum()/max(np.abs(y).sum(),1e-9)*100),MAE=float(np.mean(np.abs(y-q)))))\n        per_series=pd.DataFrame(per_series)\n        per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)\n        outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())\n    else:\n        per_series=pd.DataFrame();outlier_count=0
+    forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
+    if len(features):
+        per_series=[]
+        for key,g in pred.groupby(KEYS,sort=False,dropna=False):
+            y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)
+            per_series.append(dict(zip(KEYS,key),N_TEST=len(g),WAPE=float(np.abs(y-q).sum()/max(np.abs(y).sum(),1e-9)*100),MAE=float(np.mean(np.abs(y-q)))))
+        per_series=pd.DataFrame(per_series)
+        per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)
+        outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())
+    else:
+        per_series=pd.DataFrame();outlier_count=0
     if pred.empty:raise RuntimeError("No test predictions were generated; check cohort size and chronological split.")
     reliability=build_reliability_index(pred)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
-    intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)\n    interval_summary=intervals.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))\n    interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
+    intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
+    interval_summary=intervals.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
+    interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
     corr=reliability[["R_E","R_B","R_C","R_D"]].corr();corr.to_csv(out/"tables/reliability_signal_correlations.csv")
     high_corr=[]
     for i,a in enumerate(corr.columns):
         for b in corr.columns[i+1:]:
             value=float(corr.loc[a,b])
             if np.isfinite(value) and abs(value)>.70:high_corr.append({"signal_a":a,"signal_b":b,"correlation":value})
-    test_reliability=reliability[reliability.SPLIT=="test"].copy() if "SPLIT" in reliability else reliability.copy()\n    scenarios=make_scenarios(test_reliability,seed)
+    test_reliability=reliability[reliability.SPLIT=="test"].copy() if "SPLIT" in reliability else reliability.copy()
+    scenarios=make_scenarios(test_reliability,seed)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
         scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND)))
@@ -53,8 +67,18 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     rad_df.to_parquet(proc/"radcsr_risk_details.parquet",index=False)
     scores=brier_by_method(probabilities,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
     stats=series_bootstrap_holm(probabilities,inventory,n_boot,seed)
-    stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)\n    if len(stats):\n        stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
-    clinical_status="Not computed: no verified clinical VEN mapping supplied."\n    ven_path=Path("data/reference/clinical_ven_mapping.csv")\n    if ven_path.exists():\n        mapping=load_verified_ven_mapping(ven_path)\n        clinical_detail,clinical_summary=compare_clinical_priority(rad_df,mapping)\n        clinical_detail.to_parquet(proc/"clinical_priority.parquet",index=False)\n        clinical_summary.to_csv(out/"tables/clinical_priority_ranking_comparison.csv",index=False)\n        clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),"ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}\n    sample=joined.iloc[0]
+    stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)
+    if len(stats):
+        stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
+    clinical_status="Not computed: no verified clinical VEN mapping supplied."
+    ven_path=Path("data/reference/clinical_ven_mapping.csv")
+    if ven_path.exists():
+        mapping=load_verified_ven_mapping(ven_path)
+        clinical_detail,clinical_summary=compare_clinical_priority(rad_df,mapping)
+        clinical_detail.to_parquet(proc/"clinical_priority.parquet",index=False)
+        clinical_summary.to_csv(out/"tables/clinical_priority_ranking_comparison.csv",index=False)
+        clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),"ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}
+    sample=joined.iloc[0]
     mono=monotonicity_audit(float(sample.Q10),float(sample.Q50),float(sample.Q90),
         float(sample.AVAILABLE_STOCK),float(sample.LEAD_TIME_MONTHS))
     (out/"radcsr_monotonicity_audit.json").write_text(json.dumps(mono,indent=2))
