@@ -97,11 +97,11 @@ def signal_perturbations():
  n=40
  base=pd.DataFrame({KEYS[0]:["ORG"]*n,KEYS[1]:["VMP"]*n,KEYS[2]:["U"]*n,"PERIOD":pd.date_range("2020-01-01",periods=n,freq="MS"),"MODEL_DEMAND":100.,"Q10":90.,"Q50":100.,"Q90":110.})
  def last(x): return build_reliability_index(x,window=8).iloc[-1]
- b=last(base); under=base.copy(); under.loc[32:,"MODEL_DEMAND"]+=30
+ base.loc[35,"MODEL_DEMAND"]=120.; b=last(base); under=base.copy(); under.loc[32:,"MODEL_DEMAND"]+=30
  over=base.copy(); over.loc[32:,"MODEL_DEMAND"]-=30
- noisy=base.copy(); noisy.loc[32:,"MODEL_DEMAND"]+=np.array([30,-30,30,-30,30,-30,30,-30])
+ noisy=base.copy(); noisy.loc[31:,"MODEL_DEMAND"]=100.+np.array([20,40,80,160,320,640,1280,2560])
  wide=base.copy(); wide["Q10"]=70.; wide["Q90"]=130.
- isolated=base.copy(); isolated.loc[35,"MODEL_DEMAND"]+=3
+ isolated=base.copy(); isolated.loc[38,"MODEL_DEMAND"]+=0.1
  u,o,v,w,d=map(last,(under,over,noisy,wide,isolated))
  return {
  "R_E":{"responds_to_absolute_error":bool(u.R_E>b.R_E),"sign_flip_flat":bool(np.isclose(last(under.assign(MODEL_DEMAND=200-under.MODEL_DEMAND)).R_E,u.R_E)),"baseline":float(b.R_E),"perturbed":float(u.R_E)},
