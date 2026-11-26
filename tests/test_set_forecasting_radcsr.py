@@ -92,6 +92,9 @@ def test_end_to_end_small_cohort(tmp_path):
     assert report["prediction_rows"]>0
     assert report["inventory_rows"]>0
     assert report["ablation_rows"]>0
+    ablations = pd.read_parquet(tmp_path/"processed/radcsr_ablations.parquet")
+    assert ablations[KEYS + ["PERIOD", "SCENARIO_ID", "SPLIT"]].notna().all().all()
+    assert ablations.METHOD.nunique() >= 7
     assert (tmp_path/"output/tables/s5_bias_radcsr_vs_static_wasserstein.csv").exists()
 
 def test_probability_calibration_uses_validation_and_returns_test_only():
@@ -258,3 +261,16 @@ def test_inventory_rejects_invalid_service_level():
     x["LEAD_TIME_MONTHS"] = 2
     with pytest.raises(ValueError, match="service_level"):
         simulate_inventory(x, service_level=1.0)
+
+
+def test_inventory_right_censors_incomplete_lead_time_horizon():
+    x = sample(4).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = [1.0, 1.0, 1.0, 1.0]
+    x["Q10"] = 1.0; x["Q50"] = 1.0; x["Q90"] = 1.0
+    x["LEAD_TIME_MONTHS"] = 2
+    inv = simulate_inventory(x, initial_cover=1.0, target_cover=1.0)
+    assert inv.loc[0, "LEAD_TIME_HORIZON_COMPLETE"] == 1
+    assert inv.loc[0, "STOCKOUT_LABEL"] in (0, 1)
+    assert inv.loc[len(inv) - 1, "LEAD_TIME_HORIZON_COMPLETE"] == 0
+    assert pd.isna(inv.loc[len(inv) - 1, "STOCKOUT_LABEL"])
