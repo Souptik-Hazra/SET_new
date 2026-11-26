@@ -207,7 +207,7 @@ def test_clinical_ablation_is_not_fabricated_without_verified_mapping():
 
 def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
     from src.set_forecasting.risk.simulation import series_bootstrap_holm
-    x = sample(12)
+    x = pd.concat([sample(12), sample(12).assign(ODS_CODE="ORG02")], ignore_index=True)
     x["SCENARIO_ID"] = "S1_Stable"
     x["STOCKOUT_LABEL"] = (x.MODEL_DEMAND > 10).astype(int)
     inventory = x[KEYS + ["PERIOD", "SCENARIO_ID", "STOCKOUT_LABEL"]].copy()
