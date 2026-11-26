@@ -16,7 +16,7 @@ def make_scenarios(predictions,seed=42):
                 start=len(demand)//3;demand[start:start+max(1,len(demand)//3)]*=1.5
             if name in ("S3_Drift","S7_Combined"):demand*=1+.02*np.arange(len(demand))
             if name in ("S4_Volatility","S7_Combined"):demand=np.maximum(0,demand*rng.lognormal(0,.35,len(demand)))
-            if name=="S5_Bias":q50=np.maximum(0,q50*1.2)
+            if name=="S5_Bias":\n                q50=np.maximum(0,q50*1.2);g["Q10"]=np.maximum(0,g.Q10.to_numpy(float)*1.2);g["Q90"]=np.maximum(0,g.Q90.to_numpy(float)*1.2)
             if name in ("S6_LeadTimeShock","S7_Combined"):lead+=2
             x=g.copy();x["SCENARIO_ID"]=name;x["SCENARIO_DEMAND"]=demand
             x["SCENARIO_Q50"]=q50;x["LEAD_TIME_MONTHS"]=lead;x["STOCKOUTS_ARE_OBSERVED"]=0
