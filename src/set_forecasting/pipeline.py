@@ -70,6 +70,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
         scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights")))
     scenarios=pd.concat(scenario_rel,ignore_index=True)
+    scenarios.to_parquet(proc/"scenario_streams.parquet",index=False)
     inventory=simulate_inventory(scenarios,service_level=float(inv_cfg.get("service_level",.95)),
         initial_cover=float(inv_cfg.get("initial_cover_months",2)),target_cover=float(inv_cfg.get("target_cover_months",3)))
     keys=KEYS+["PERIOD","SCENARIO_ID"]
