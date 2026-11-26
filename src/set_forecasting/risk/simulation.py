@@ -116,7 +116,7 @@ def _wasserstein_tail(samples,threshold,epsilon):
         if budget<=1e-12:break
     return float(np.clip(base+moved/n,0,1))
 
-def risk_baseline_probabilities(frame, seed=42)
+def risk_baseline_probabilities(frame, seed=42):
     """Static, Rolling Quantile, EWMA, ACI, Monte Carlo and W1-DRO risk methods."""
     rows=[]
     for _,g in frame.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
