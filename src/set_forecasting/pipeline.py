@@ -9,7 +9,7 @@ from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
 from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
-from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,series_bootstrap_holm,calibrate_risk_probabilities
+from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
@@ -108,6 +108,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     rad_df.to_parquet(proc/"radcsr_risk_details.parquet",index=False)
     eval_prob=calibrated.drop(columns=["STOCKOUT_LABEL"],errors="ignore")
     scores=brier_by_method(eval_prob,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
+    calibration=calibration_metrics(eval_prob,inventory,n_bins=int(cfg.get("evaluation",{}).get("calibration_bins",10)))
+    calibration.to_csv(out/"tables/risk_calibration_metrics.csv",index=False)
     ablation_test=calibrated[calibrated.METHOD.str.startswith("RADCSR")].copy()
     if len(ablation_test):
         ablation_test["BRIER"]=(ablation_test.SHORTAGE_PROBABILITY-ablation_test.STOCKOUT_LABEL)**2
