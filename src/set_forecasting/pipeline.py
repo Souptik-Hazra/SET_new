@@ -214,8 +214,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "calibrated_test_probability_rows":len(calibrated),
       "calibrator_status_counts":calibrated.CALIBRATOR_STATUS.value_counts().to_dict(),
       "probability_semantics":{
-          "RADCSR_DISTRIBUTION_PROBABILITY":"1-Phi((A-mu_eff)/sigma_eff), where mu_eff=(mu+I(A<mu)*mu*kappa_mu*R_rel)*(L_eff/L), sigma_eff=sigma*(1+kappa_sigma*R_rel)*sqrt(L_eff/L), L_eff=min(L*(1+kappa_l*R_rel), horizon_cap*L).",
-          "RADCSR_PROBABILITY":"p0+(1-p0)*(1-exp(-S)); p0=1-Phi((A-mu)/sigma); S=log(1+kappa_sigma*R_rel)+log(1+kappa_mu*R_rel*I(A<mu))+log(max(L_eff/L,1)). This is a monotone risk-uplift score, not the adjusted-distribution tail; validation calibration and held-out evaluation are required."
+          "RADCSR_DISTRIBUTION_PROBABILITY":"1-Phi((A-mu_eff)/sigma_eff). If A<mu_L: mu_adj=min(mu_L*(1+kappa_mu*R_rel),A); L_eff=min(L*(1+kappa_l*R_rel),horizon_cap*L); mu_eff=min(mu_adj*(L_eff/L),A); sigma_eff=sigma_L*(1+kappa_sigma*R_rel)*sqrt(L_eff/L). If A>=mu_L: mu_eff=mu_L; L_eff=L; sigma_eff=sigma_L*(1+kappa_sigma*R_rel). Mean uplift and horizon extension are conditional on A<mu_L; mean is capped at availability before and after horizon scaling. This prevents the mean-overshoot reversal observed at commit e0826409.",
+          "RADCSR_PROBABILITY":"p_adj+(0.5-p_adj)*(1-exp(-S)), where p_adj=RADCSR_DISTRIBUTION_PROBABILITY; S=log(1+kappa_sigma*R_rel)+I(A<mu_L)*(log(1+kappa_mu*R_rel)+log(L_eff/L)). Separate monotone uplift toward 0.5, not the adjusted-distribution tail; validation calibration and held-out evaluation are required."
       },
       "signal_correlations_above_0_70":high_corr,"mean_unreliability_by_test_scenario":mean_unreliability,
       "stress_unreliability_increase_vs_stable":{k:float(v-mean_unreliability.get("S1_Stable",0)) for k,v in mean_unreliability.items()},
