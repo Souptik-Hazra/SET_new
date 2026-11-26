@@ -10,8 +10,8 @@ from ..reliability.index import build_reliability_index, KEYS
 
 DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
 FORMULAS = {
- "RADCSR_DISTRIBUTION_PROBABILITY": "1-Phi((A-mu_eff)/sigma_eff). If A<mu_L: mu_adj=min(mu_L*(1+kappa_mu*R_rel),A); L_eff=min(L*(1+kappa_l*R_rel),horizon_cap*L); mu_eff=min(mu_adj*(L_eff/L),A); sigma_eff=sigma_L*(1+kappa_sigma*R_rel)*sqrt(L_eff/L). If A>=mu_L: mu_eff=mu_L; L_eff=L; sigma_eff=sigma_L*(1+kappa_sigma*R_rel). The mean shift and horizon extension are conditional on A<mu_L; both mean stages are capped at availability.",
- "RADCSR_PROBABILITY": "p_adj+(0.5-p_adj)*(1-exp(-S)), where p_adj=RADCSR_DISTRIBUTION_PROBABILITY; S=log(1+kappa_sigma*R_rel)+I(A<mu_L)*(log(1+kappa_mu*R_rel)+log(L_eff/L)). This is a separate monotone uplift toward the 0.5 ceiling, not the adjusted-distribution tail. It requires validation calibration and held-out evaluation before any calibrated-probability interpretation."
+ "RADCSR_DISTRIBUTION_PROBABILITY": "p_adj=1-Phi((A-mu_eff)/sigma_eff). L_eff=min(L*(1+kappa_l*R),L*horizon_cap); sigma_eff=sigma_L*(1+kappa_sigma*R)*sqrt(L_eff/L). If A<mu_L: mu_eff=A+(mu_L-A)*(1+kappa_mu*R)*(L_eff/L). If A>=mu_L: mu_eff=A-(A-mu_L)*exp(-kappa_mu*R*L_eff/L), strictly below A for finite R. Require kappa_mu>=kappa_sigma; configured values are 0.75 and 0.50.",
+ "RADCSR_PROBABILITY": "1-(1-p_adj)*exp(-S), equivalently p_adj+(1-p_adj)*(1-exp(-S)); S=log(1+kappa_mu*R)+log(L_eff/L). This separate reliability uplift is strictly increasing in R in both regimes for positive configured coefficients and is not the adjusted normal tail. It requires validation calibration and held-out evaluation before calibrated-probability interpretation."
 }
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -22,13 +22,17 @@ def load(rel):
 
 def monotonicity():
  r=np.round(np.arange(0,1.0001,.05),2); q10,q50,q90,L=80.,100.,130.,2.
+ ks,km,kl=.50,.75,1.5
  mu,sigma=infer_lead_time_distribution(q10,q50,q90,L)
  cases=[]
- for regime,A in (("A > mu_L",mu+sigma),("A < mu_L",max(0.,mu-sigma))):
-  z=radcsr_probability(np.full(len(r),q10),np.full(len(r),q50),np.full(len(r),q90),np.full(len(r),A),np.full(len(r),L),r)
+ for regime,A in (("A >= mu_L",mu+sigma),("A < mu_L",max(0.,mu-sigma))):
+  z=radcsr_probability(np.full(len(r),q10),np.full(len(r),q50),np.full(len(r),q90),
+      np.full(len(r),A),np.full(len(r),L),r,kappa_sigma=ks,kappa_mu=km,kappa_l=kl,horizon_cap=2.0)
   for col in ("RADCSR_DISTRIBUTION_PROBABILITY","RADCSR_PROBABILITY"):
    seq=z[col].to_numpy(float); inc=np.diff(seq)
-   cases.append({"quantity":col,"regime":regime,"availability":float(A),"pass":bool(np.all(inc>=-1e-10)),"sequence":seq.tolist(),"increments":inc.tolist(),"minimum_increment":float(inc.min())})
+   cases.append({"quantity":col,"regime":regime,"availability":float(A),
+       "pass":bool(np.all(inc>0.0)),"sequence":seq.tolist(),
+       "increments":inc.tolist(),"minimum_increment":float(inc.min())})
  return cases
 
 def demand_class(y):
@@ -186,9 +190,9 @@ def run():
  result={"disclaimer":DISCLAIMER,"probability_formulas":FORMULAS,"monotonicity_sweeps":sweeps}
  # A monotonicity failure is a hard stop: print the exact sequences and do not run later checks.
  print(DISCLAIMER); print("DUAL PROBABILITY FORMULAS"); print(json.dumps(FORMULAS,indent=2)); print("1. MONOTONICITY SWEEPS")
- for x in sweeps: print(x["quantity"],"|",x["regime"],"|","PASS" if x["pass"] else "FAIL","| sequence=",x["sequence"])
+ for x in sweeps: print(x["quantity"],"|",x["regime"],"|","PASS" if x["pass"] else "FAIL","| minimum_increment=",x["minimum_increment"],"| sequence=",x["sequence"])
  if failed:
-  print("MONOTONICITY FAILURE: stopping. Failing sequences above are verbatim.")
+  print("MONOTONICITY FAILURE: stopping. Failing sequences above are verbatim; no B2/B3 work is run.")
   return result
  result["lead_time_distribution_validation"]=lead_time_validation()
  result["probability_calibration"]=probability_calibration()
