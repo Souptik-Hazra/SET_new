@@ -7,7 +7,7 @@ from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
 from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
-from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,series_bootstrap_holm
+from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,series_bootstrap_holm\nfrom .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
     out=Path(output_dir);proc=Path(processed_dir)
@@ -19,7 +19,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     if pred.empty:raise RuntimeError("No test predictions were generated; check cohort size and chronological split.")
     reliability=build_reliability_index(pred)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
-    intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
+    intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)\n    interval_summary=intervals.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))\n    interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
     corr=reliability[["R_E","R_B","R_C","R_D"]].corr();corr.to_csv(out/"tables/reliability_signal_correlations.csv")
     high_corr=[]
     for i,a in enumerate(corr.columns):
@@ -54,7 +54,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     scores=brier_by_method(probabilities,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
     stats=series_bootstrap_holm(probabilities,inventory,n_boot,seed)
     stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)\n    if len(stats):\n        stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
-    sample=joined.iloc[0]
+    clinical_status="Not computed: no verified clinical VEN mapping supplied."\n    ven_path=Path("data/reference/clinical_ven_mapping.csv")\n    if ven_path.exists():\n        mapping=load_verified_ven_mapping(ven_path)\n        clinical_detail,clinical_summary=compare_clinical_priority(rad_df,mapping)\n        clinical_detail.to_parquet(proc/"clinical_priority.parquet",index=False)\n        clinical_summary.to_csv(out/"tables/clinical_priority_ranking_comparison.csv",index=False)\n        clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),"ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}\n    sample=joined.iloc[0]
     mono=monotonicity_audit(float(sample.Q10),float(sample.Q50),float(sample.Q90),
         float(sample.AVAILABLE_STOCK),float(sample.LEAD_TIME_MONTHS))
     (out/"radcsr_monotonicity_audit.json").write_text(json.dumps(mono,indent=2))
@@ -65,7 +65,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "signal_correlations_above_0_70":high_corr,"mean_reliability_by_scenario":mean_rel,"stress_reliability_lift_vs_stable":{k:float(v-mean_rel.get("S1_Stable",0)) for k,v in mean_rel.items()},
       "monotonicity_audit":{k:v for k,v in mono.items() if k!="probability_curve"},
       "bootstrap_resamples":n_boot,"disclaimer":DISCLAIMER,
-      "clinical_priority":"Not computed: no verified clinical VEN mapping supplied.",
+      "clinical_priority":clinical_status,
       "interpretation":"Brier scores compare probabilities with synthetic stockout labels only; they are not evidence of observed hospital stockout prediction.",
       "limitations":"SCMD has no observed stock, orders, lead times or stockout events. Simulated inventory and scenario assumptions must be sensitivity-tested."}
     (out/"pipeline_report.json").write_text(json.dumps(report,indent=2,default=str))
