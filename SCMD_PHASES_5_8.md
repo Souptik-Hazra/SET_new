@@ -27,3 +27,14 @@ The active generator includes stable, surge, gradual drift, volatility, forecast
 Comparisons with fewer than 10 independent organisation × VMP × unit series are marked descriptive only; significance flags are suppressed. Cluster bootstrap intervals with small cluster counts remain unstable.
 
 These code-level checks do not establish external validity. All inventory, lead-time and stockout labels remain simulated because SCMD has no observed inventory or stockout outcomes.
+
+
+## Corrected simulation and score semantics
+
+- `LEAD_TIME_MONTHS` is now selected from `config/config.yaml` for each series, with the configured alternatives distributed deterministically across series. The lead-time shock adds two months to the selected base assumption.
+- Inventory lead-time demand covers periods `t` through `t + lead_time - 1`. A receipt due at `t + lead_time` is excluded because it arrives after that demand horizon.
+- Inventory sensitivity now varies base lead-time assumptions as well as service level and stock cover. Use `python scripts/run_inventory_sensitivity.py` to evaluate the configured grid.
+- Each scenario exports structured `PERTURBATIONS` metadata with the start index and parameters of every applied transformation. `SHIFT_MAGNITUDE` is a legacy scalar summary; consult `PERTURBATIONS` for exact units and values.
+- `R_UNRELIABILITY` is the canonical four-signal score. Higher values mean worse forecast reliability. `R_REL` remains as a compatibility alias for existing RADCSR interfaces.
+- Phase 1 writes only retained monthly series with train/validation/test assignments to the final Parquet file. The full runner uses `load_series=False` so the expanded cohort is not loaded into memory a second time. The aggregated input remains a pandas DataFrame and should still be profiled against the target machine's RAM on the full SCMD extract.
+- `resolved_config.json` records the actual runtime seed and bootstrap count; when no seed is passed to the pipeline, the configured YAML seed is used.
