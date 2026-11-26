@@ -1,5 +1,6 @@
 """Nine synthetic scenarios, periodic-review inventory and comparable risk baselines."""
 import hashlib
+import json
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -12,7 +13,7 @@ def _stable_seed(seed, key):
     return (int(seed) + int.from_bytes(digest[:4], "big")) % (2**32)
 
 
-def make_scenarios(predictions, seed=42):
+def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
     """Create reproducible, series-isolated synthetic stress streams."""
     required = KEYS + ["PERIOD", "MODEL_DEMAND", "Q10", "Q50", "Q90"]
     missing = set(required) - set(predictions.columns)
@@ -22,6 +23,11 @@ def make_scenarios(predictions, seed=42):
         raise ValueError("Scenario input must have one row per series and period")
     if predictions[required].isna().any().any():
         raise ValueError("Scenario inputs must not contain null keys, periods, demand or quantiles")
+    lead_times = tuple(sorted({int(value) for value in lead_times}))
+    if not lead_times or any(value < 1 for value in lead_times):
+        raise ValueError("lead_times must contain positive integer month values")
+    if any(float(value) != int(value) for value in lead_times):
+        raise ValueError("lead_times must contain whole month values")
     frames = []
     for key, group in predictions.groupby(KEYS, sort=False, dropna=False):
         group = group.sort_values("PERIOD").copy()
@@ -32,28 +38,29 @@ def make_scenarios(predictions, seed=42):
             rng = np.random.default_rng(_stable_seed(seed, (*key, name)))
             x = group.copy()
             demand = base.copy()
-            lead = np.full(len(x), 2, dtype=int)
-            magnitude = 0.0
+            base_lead = lead_times[_stable_seed(seed, (*key, "base_lead_time")) % len(lead_times)]
+            lead_shock = 0
+            perturbations = []
             if name in ("S2_Surge", "S7_Combined"):
                 demand[start:start + duration] *= 1.5
-                magnitude = 0.5
+                perturbations.append({"name": "surge", "start_index": start, "duration": duration, "multiplier": 1.5})
             if name in ("S3_Drift", "S7_Combined"):
                 demand *= 1 + .02 * np.arange(len(demand))
-                magnitude = .02
+                perturbations.append({"name": "gradual_drift", "start_index": 0, "monthly_rate": .02})
             if name in ("S4_Volatility", "S7_Combined"):
                 demand = np.maximum(0, demand * rng.lognormal(0, .35, len(demand)))
-                magnitude = .35
+                perturbations.append({"name": "lognormal_volatility", "start_index": 0, "sigma": .35})
             if name == "S5_Bias":
                 for col in ["Q10", "Q50", "Q90"]:
                     x[col] = np.maximum(0, x[col].to_numpy(float) * 1.2)
-                magnitude = .2
+                perturbations.append({"name": "forecast_bias", "start_index": 0, "forecast_multiplier": 1.2})
             if name in ("S6_LeadTimeShock", "S7_Combined"):
-                lead += 2
-                magnitude = 2
+                lead_shock = 2
+                perturbations.append({"name": "lead_time_shock", "start_index": 0, "additional_months": 2})
             if name == "S8_Intermittent":
                 keep = rng.random(len(demand)) < .5
                 demand = np.where(keep, demand * 2.0, 0.0)
-                magnitude = .5
+                perturbations.append({"name": "intermittency", "start_index": 0, "zero_probability": .5, "positive_multiplier": 2.0})
             if name == "S9_CorrelatedSurge":
                 innovations = rng.normal(0, .12, len(demand))
                 ar = np.zeros(len(demand))
@@ -61,12 +68,16 @@ def make_scenarios(predictions, seed=42):
                     ar[i] = .8 * ar[i - 1] + innovations[i]
                 demand = demand * np.exp(np.clip(ar, -1.0, 1.0))
                 demand[start:start + duration] *= 1.5
-                magnitude = .5
+                perturbations.append({"name": "correlated_surge", "start_index": start, "duration": duration, "ar1": .8, "innovation_sigma": .12, "surge_multiplier": 1.5})
+            lead = np.full(len(x), base_lead + lead_shock, dtype=int)
             x["SCENARIO_ID"] = name
             x["SCENARIO_DEMAND"] = demand
+            x["LEAD_TIME_BASE_MONTHS"] = base_lead
+            x["LEAD_TIME_SHOCK_MONTHS"] = lead_shock
             x["LEAD_TIME_MONTHS"] = lead
-            x["SHIFT_START_INDEX"] = start if name != "S1_Stable" else -1
-            x["SHIFT_MAGNITUDE"] = magnitude
+            x["PERTURBATIONS"] = json.dumps(perturbations, separators=(",", ":"))
+            x["SHIFT_START_INDEX"] = next((p["start_index"] for p in perturbations if p["name"] in ("surge", "correlated_surge")), 0 if perturbations else -1)
+            x["SHIFT_MAGNITUDE"] = max([abs(float(v)) for p in perturbations for k, v in p.items() if k in ("monthly_rate", "sigma", "zero_probability") and isinstance(v, (int, float))] + [0.5 if any(p["name"] in ("surge", "correlated_surge") for p in perturbations) else 0.0])
             x["STOCKOUTS_ARE_OBSERVED"] = 0
             x["OUTCOME_TYPE"] = "SIMULATED"
             frames.append(x)
@@ -124,14 +135,23 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
     return pd.DataFrame(rows)
 
 def inventory_sensitivity(scenarios, service_levels=(0.90, 0.95, 0.99),
-                            initial_covers=(1.0, 2.0), target_covers=(2.0, 3.0)):
+                            initial_covers=(1.0, 2.0), target_covers=(2.0, 3.0),
+                            lead_times=(1, 2, 3)):
     """Evaluate a predeclared inventory-assumption grid on identical scenarios."""
+    lead_times = tuple(sorted({int(value) for value in lead_times}))
+    if not lead_times or any(value < 1 for value in lead_times):
+        raise ValueError("lead_times must contain positive integer month values")
     rows = []
-    for service in service_levels:
+    for lead_time in lead_times:
+      scenario_copy = scenarios.copy()
+      shock = scenario_copy.get("LEAD_TIME_SHOCK_MONTHS", pd.Series(0, index=scenario_copy.index)).to_numpy(int)
+      scenario_copy["LEAD_TIME_BASE_MONTHS"] = int(lead_time)
+      scenario_copy["LEAD_TIME_MONTHS"] = int(lead_time) + shock
+      for service in service_levels:
         for initial in initial_covers:
             for target in target_covers:
                 inventory = simulate_inventory(
-                    scenarios, service_level=float(service),
+                    scenario_copy, service_level=float(service),
                     initial_cover=float(initial), target_cover=float(target))
                 summary = inventory.groupby("SCENARIO_ID", as_index=False).agg(
                     SIMULATED_STOCKOUT_RATE=("STOCKOUT_LABEL", "mean"),
@@ -139,6 +159,7 @@ def inventory_sensitivity(scenarios, service_levels=(0.90, 0.95, 0.99),
                     MEAN_SHORTAGE_QUANTITY=("SHORTAGE_QUANTITY", "mean"),
                     MEAN_AVAILABLE_STOCK=("AVAILABLE_STOCK", "mean"),
                     COMPLETE_HORIZON_ROWS=("LEAD_TIME_HORIZON_COMPLETE", "sum"))
+                summary["BASE_LEAD_TIME_MONTHS"] = int(lead_time)
                 summary["SERVICE_LEVEL"] = float(service)
                 summary["INITIAL_COVER_MONTHS"] = float(initial)
                 summary["TARGET_COVER_MONTHS"] = float(target)
