@@ -123,6 +123,29 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             rows.append(rec)
     return pd.DataFrame(rows)
 
+def inventory_sensitivity(scenarios, service_levels=(0.90, 0.95, 0.99),
+                            initial_covers=(1.0, 2.0), target_covers=(2.0, 3.0)):
+    """Evaluate a predeclared inventory-assumption grid on identical scenarios."""
+    rows = []
+    for service in service_levels:
+        for initial in initial_covers:
+            for target in target_covers:
+                inventory = simulate_inventory(
+                    scenarios, service_level=float(service),
+                    initial_cover=float(initial), target_cover=float(target))
+                summary = inventory.groupby("SCENARIO_ID", as_index=False).agg(
+                    SIMULATED_STOCKOUT_RATE=("STOCKOUT_LABEL", "mean"),
+                    MONTHLY_SHORTAGE_RATE=("MONTHLY_STOCKOUT_LABEL", "mean"),
+                    MEAN_SHORTAGE_QUANTITY=("SHORTAGE_QUANTITY", "mean"),
+                    MEAN_AVAILABLE_STOCK=("AVAILABLE_STOCK", "mean"),
+                    COMPLETE_HORIZON_ROWS=("LEAD_TIME_HORIZON_COMPLETE", "sum"))
+                summary["SERVICE_LEVEL"] = float(service)
+                summary["INITIAL_COVER_MONTHS"] = float(initial)
+                summary["TARGET_COVER_MONTHS"] = float(target)
+                rows.append(summary)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
 def _wasserstein_tail(samples,threshold,epsilon):
     """Empirical W1 worst-case tail probability via optimal fractional mass transport."""
     x=np.asarray(samples,float);n=len(x)
