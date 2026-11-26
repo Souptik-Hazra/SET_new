@@ -105,10 +105,10 @@ def signal_perturbations():
  isolated=base.copy(); isolated.loc[38,"MODEL_DEMAND"]+=0.1
  u,o,v,w,d=map(last,(under,over,noisy,wide,isolated))
  return {
- "R_E":{"responds_to_absolute_error":bool(u.R_E>b.R_E),"sign_flip_flat":bool(np.isclose(last(under.assign(MODEL_DEMAND=200-under.MODEL_DEMAND)).R_E,u.R_E)),"baseline":float(b.R_E),"perturbed":float(u.R_E)},
- "R_B":{"underforecast_penalty_exceeds_overforecast":bool(u.R_B>o.R_B),"symmetric_ablation_equal":bool(np.isclose(u.R_B_SYMMETRIC,o.R_B_SYMMETRIC)),"overforecast_separate":bool(o.R_B_OVER>0),"under_R_B":float(u.R_B),"over_R_B":float(o.R_B),"under_symmetric":float(u.R_B_SYMMETRIC),"over_symmetric":float(o.R_B_SYMMETRIC),"formula":"R_B=clip(2*(sigmoid(2*max(mean(actual-Q50),0)/scale)-0.5),0,1); R_B_OVER applies same transform to max(-mean(error),0)."},
- "R_C":{"interval_width_only_flat":bool(np.isclose(w.R_C,b.R_C)),"responds_to_coverage_error":bool(v.R_C>b.R_C),"baseline":float(b.R_C),"perturbed":float(v.R_C)},
- "R_D":{"isolated_small_error_no_alarm":bool(d.R_D==b.R_D),"baseline":float(b.R_D),"perturbed":float(d.R_D)}
+ "R_E":{"normalized":bool(all(0<=getattr(z,"R_E")<=1 for z in (b,u,o,v,w,d))),"responds_to_absolute_error":bool(u.R_E>b.R_E),"sign_flip_flat":bool(np.isclose(last(under.assign(MODEL_DEMAND=200-under.MODEL_DEMAND)).R_E,u.R_E)),"baseline":float(b.R_E),"perturbed":float(u.R_E)},
+ "R_B":{"normalized":bool(all(0<=getattr(z,"R_B")<=1 and 0<=getattr(z,"R_B_SYMMETRIC")<=1 and 0<=getattr(z,"R_B_OVER")<=1 for z in (b,u,o,v,w,d))),"underforecast_penalty_exceeds_overforecast":bool(u.R_B>o.R_B),"symmetric_ablation_equal":bool(np.isclose(u.R_B_SYMMETRIC,o.R_B_SYMMETRIC)),"overforecast_separate":bool(o.R_B_OVER>0),"under_R_B":float(u.R_B),"over_R_B":float(o.R_B),"under_symmetric":float(u.R_B_SYMMETRIC),"over_symmetric":float(o.R_B_SYMMETRIC),"formula":"R_B=clip(2*(sigmoid(2*max(mean(actual-Q50),0)/scale)-0.5),0,1); R_B_OVER applies same transform to max(-mean(error),0)."},
+ "R_C":{"normalized":bool(all(0<=getattr(z,"R_C")<=1 for z in (b,u,o,v,w,d))),"interval_width_only_flat":bool(np.isclose(w.R_C,b.R_C)),"responds_to_coverage_error":bool(v.R_C>b.R_C),"baseline":float(b.R_C),"perturbed":float(v.R_C)},
+ "R_D":{"normalized":bool(all(0<=getattr(z,"R_D")<=1 for z in (b,u,o,v,w,d))),"isolated_small_error_no_alarm":bool(d.R_D==b.R_D),"baseline":float(b.R_D),"perturbed":float(d.R_D)}
  }
 
 def drift_metrics():
@@ -150,7 +150,7 @@ def run():
   lines += ["",f"## {key}",json.dumps(result[key],indent=2,default=str)]
  (out/"mathematical_validation.md").write_text("\n".join(lines),encoding="utf-8")
  print("2. CALIBRATION PER DEMAND CLASS"); print(json.dumps(result["lead_time_distribution_validation"],indent=2))
- print("3. ASYMMETRIC-BIAS SENSITIVITY"); print(json.dumps(result["reliability_signal_perturbations"]["R_B"],indent=2))
+ print("3. RELIABILITY SIGNAL NORMALISATION AND PERTURBATION CHECKS"); print(json.dumps(result["reliability_signal_perturbations"],indent=2))
  print("4. DRIFT DETECTION"); print(json.dumps(result["drift_detection"],indent=2))
  print("5. SIGNAL CORRELATION MATRIX / REDUNDANCY FLAGS"); print(json.dumps(result["signal_correlations"],indent=2))
  print("RADCSR_PROBABILITY CALIBRATION"); print(json.dumps(result["probability_calibration"],indent=2))
