@@ -12,12 +12,12 @@ SCMD_COLUMNS = [
 
 def get_scmd_path(path=None):
     root = Path(__file__).resolve().parents[1]
-    source = Path(path) if path else root / "data" / "combined_secondary_care_medicines.csv"
+    source = Path(path) if path else root / "data" / "raw" / "combined_secondary_care_medicines.csv"
     if not source.is_absolute():
         source = root / source
     if not source.is_file():
         raise FileNotFoundError(
-            f"SCMD CSV not found: {source}. Place combined_secondary_care_medicines.csv in data/."
+            f"SCMD CSV not found: {source}. Place combined_secondary_care_medicines.csv in data/raw/."
         )
     return source
 
