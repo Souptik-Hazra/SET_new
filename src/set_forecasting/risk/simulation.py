@@ -167,6 +167,41 @@ def brier_by_method(probabilities,inventory):
     x["BRIER"]=(x.SHORTAGE_PROBABILITY-x.STOCKOUT_LABEL)**2
     return x.groupby(["SCENARIO_ID","METHOD"],as_index=False).agg(BRIER_SCORE=("BRIER","mean"),N=("BRIER","size"))
 
+def calibration_metrics(probabilities, inventory, n_bins=10):
+    """Return held-out calibration diagnostics against the supplied outcome labels."""
+    if int(n_bins) < 2:
+        raise ValueError("n_bins must be at least 2")
+    keys = KEYS + ["PERIOD", "SCENARIO_ID"]
+    x = probabilities.merge(inventory[keys + ["STOCKOUT_LABEL"]],
+                            on=keys, how="inner", validate="many_to_one")
+    x = x.dropna(subset=["STOCKOUT_LABEL", "SHORTAGE_PROBABILITY"]).copy()
+    x["SHORTAGE_PROBABILITY"] = x.SHORTAGE_PROBABILITY.clip(1e-6, 1 - 1e-6)
+    x["STOCKOUT_LABEL"] = x.STOCKOUT_LABEL.astype(float)
+    x["BRIER"] = (x.SHORTAGE_PROBABILITY - x.STOCKOUT_LABEL) ** 2
+    x["LOG_LOSS"] = -(x.STOCKOUT_LABEL * np.log(x.SHORTAGE_PROBABILITY) +
+                      (1 - x.STOCKOUT_LABEL) * np.log(1 - x.SHORTAGE_PROBABILITY))
+    x["PROBABILITY_BIN"] = pd.cut(x.SHORTAGE_PROBABILITY,
+                                  bins=np.linspace(0, 1, int(n_bins) + 1),
+                                  include_lowest=True, duplicates="drop")
+    rows = []
+    for (scenario, method), group in x.groupby(["SCENARIO_ID", "METHOD"], sort=True):
+        ece = 0.0
+        for _, bucket in group.groupby("PROBABILITY_BIN", observed=True):
+            ece += len(bucket) / len(group) * abs(
+                float(bucket.SHORTAGE_PROBABILITY.mean()) -
+                float(bucket.STOCKOUT_LABEL.mean()))
+        rows.append({
+            "SCENARIO_ID": scenario, "METHOD": method, "N": len(group),
+            "BRIER_SCORE": float(group.BRIER.mean()),
+            "LOG_LOSS": float(group.LOG_LOSS.mean()),
+            "EXPECTED_CALIBRATION_ERROR": float(ece),
+            "MEAN_PREDICTED_PROBABILITY": float(group.SHORTAGE_PROBABILITY.mean()),
+            "OBSERVED_EVENT_RATE": float(group.STOCKOUT_LABEL.mean()),
+            "OUTCOME_TYPE": str(inventory.OUTCOME_TYPE.iloc[0]) if "OUTCOME_TYPE" in inventory and len(inventory) else "UNKNOWN",
+        })
+    return pd.DataFrame(rows)
+
+
 def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
     """Paired cluster bootstrap CI and paired sign-flip test, with global Holm correction.
 
