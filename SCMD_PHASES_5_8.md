@@ -24,4 +24,6 @@ The active generator includes stable, surge, gradual drift, volatility, forecast
 - Phase 8 resamples organisation × VMP × unit series as clusters, computes paired percentile-bootstrap confidence intervals, uses a paired sign-flip randomisation test, and applies one global Holm step-down correction across the scenario/method family.
 - The final pipeline report records the monotonicity gate, scenario reliability/risk summaries, implemented ablations, statistical protocol, and simulation disclaimer.
 
+Comparisons with fewer than 10 independent organisation × VMP × unit series are marked descriptive only; significance flags are suppressed. Cluster bootstrap intervals with small cluster counts remain unstable.
+
 These code-level checks do not establish external validity. All inventory, lead-time and stockout labels remain simulated because SCMD has no observed inventory or stockout outcomes.
