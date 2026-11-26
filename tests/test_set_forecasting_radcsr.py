@@ -117,3 +117,43 @@ def test_inventory_label_uses_realised_lead_time_demand():
     assert inv.loc[0,"LEAD_TIME_DEMAND"]==20.
     assert inv.loc[0,"STOCKOUTS_ARE_OBSERVED"]==0
     assert inv.loc[0,"STOCKOUT_LABEL"]==int(inv.loc[0,"LEAD_TIME_DEMAND"]>inv.loc[0,"AVAILABLE_STOCK"])
+
+
+def test_project_root_and_relative_source_resolution(tmp_path, monkeypatch):
+    from src.set_forecasting.data.source import get_project_root, get_scmd_path
+    root = get_project_root()
+    assert root.name == "SET_new"
+    relative = ".scmd_path_resolution_test.csv"
+    target = root / relative
+    try:
+        target.write_text("temporary", encoding="utf-8")
+        monkeypatch.chdir(root)
+        assert get_scmd_path(relative) == target
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_radcsr_ablation_uses_configured_coefficients():
+    from src.set_forecasting.risk.radcsr import radcsr_ablations
+    x = sample(36).tail(8).copy()
+    x["Q10"] = 5.0
+    x["Q50"] = 10.0
+    x["Q90"] = 15.0
+    x["AVAILABLE_STOCK"] = 8.0
+    x["LEAD_TIME_MONTHS"] = 2
+    x["R_E"] = .2
+    x["R_B"] = .4
+    x["R_C"] = .6
+    x["R_D"] = .8
+    x["R_REL"] = .45
+    default = radcsr_ablations(x)
+    configured = radcsr_ablations(
+        x, kappa_sigma=1.2, kappa_mu=.8, kappa_l=2.0,
+        horizon_cap=3.0,
+        weights={"error": .1, "bias": .2, "coverage": .3, "drift": .4},
+    )
+    assert len(default) == len(configured)
+    assert not np.allclose(
+        default.loc[default.METHOD == "RADCSR_noBias", "SHORTAGE_PROBABILITY"],
+        configured.loc[configured.METHOD == "RADCSR_noBias", "SHORTAGE_PROBABILITY"],
+    )

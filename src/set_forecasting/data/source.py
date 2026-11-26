@@ -10,8 +10,13 @@ SCMD_COLUMNS = [
     "TOTAL_QUANITY_IN_VMP_UNIT", "INDICATIVE_COST",
 ]
 
+def get_project_root():
+    """Return the repository root for paths supplied relative to the project."""
+    return Path(__file__).resolve().parents[3]
+
+
 def get_scmd_path(path=None):
-    root = Path(__file__).resolve().parents[1]
+    root = get_project_root()
     source = Path(path) if path else root / "data" / "raw" / "combined_secondary_care_medicines.csv"
     if not source.is_absolute():
         source = root / source

@@ -10,7 +10,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from .source import get_scmd_path, validate_scmd_header
+from .source import get_project_root, get_scmd_path, validate_scmd_header
 
 logger = logging.getLogger(__name__)
 KEY = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
@@ -85,7 +85,13 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         raise ValueError(f"Aggregated business key is not unique: {duplicate_count:,} duplicates")
 
     # Build an explicit monthly calendar per series; absence is not asserted to be zero demand.
-    frames = []
+    from pyarrow import Table
+    from pyarrow.parquet import ParquetWriter
+    series_path = Path(series_path)
+    series_path.parent.mkdir(parents=True, exist_ok=True)
+    batch_frames = []
+    writer = None
+    batch_size = 250
     for key_values, group in agg.groupby(KEY, sort=False, dropna=False):
         group = group.sort_values("PERIOD").copy()
         months = pd.date_range(group["PERIOD"].min(), group["PERIOD"].max(), freq="MS")
@@ -105,9 +111,26 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         indexed["VMP_PRODUCT_NAME"] = indexed["VMP_PRODUCT_NAME"].ffill().bfill()
         indexed["UNIT_OF_MEASURE_NAME"] = indexed["UNIT_OF_MEASURE_NAME"].ffill().bfill()
         indexed["YEAR_MONTH"] = indexed.index.strftime("%Y%m")
-        frames.append(indexed.reset_index())
-    series = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    series = series.sort_values(KEY + ["PERIOD"]).reset_index(drop=True)
+        batch_frames.append(indexed.reset_index())
+        if len(batch_frames) >= batch_size:
+            batch = pd.concat(batch_frames, ignore_index=True).sort_values(KEY + ["PERIOD"])
+            table = Table.from_pandas(batch, preserve_index=False)
+            if writer is None:
+                writer = ParquetWriter(series_path, table.schema, compression="zstd")
+            writer.write_table(table)
+            batch_frames.clear()
+    if batch_frames:
+        batch = pd.concat(batch_frames, ignore_index=True).sort_values(KEY + ["PERIOD"])
+        table = Table.from_pandas(batch, preserve_index=False)
+        if writer is None:
+            writer = ParquetWriter(series_path, table.schema, compression="zstd")
+        writer.write_table(table)
+    if writer is not None:
+        writer.close()
+        series = pd.read_parquet(series_path)
+        series = series.sort_values(KEY + ["PERIOD"]).reset_index(drop=True)
+    else:
+        series = pd.DataFrame()
 
     # Cohort statistics and exclusion reasons; count missing periods separately.
     stats = []
@@ -186,7 +209,6 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     Path(series_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cohort_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
-    series.to_parquet(series_path, index=False)
     cohort.to_csv(cohort_path, index=False)
     monthly_summary.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
     report = {
@@ -215,7 +237,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
-    root = Path(__file__).resolve().parents[1]
+    root = get_project_root()
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
     if not output_root.is_absolute(): output_root = root / output_root
