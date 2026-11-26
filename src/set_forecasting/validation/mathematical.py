@@ -44,34 +44,61 @@ def stats(a,lo,md,hi):
  return {"n":len(a),"coverage_80":cov,"median_abs_error":float(np.mean(abs(a-md))),"mean_interval_width":float(np.mean(hi-lo)),"adequate":bool(abs(cov-.8)<=.1)}
 
 def lead_time_validation():
- f=load("data/processed/forecasts.parquet"); s=load("data/processed/scmd_monthly_series.parquet")
- classes={}; train_errors={}
+ f=load("data/processed/forecasts.parquet")
+ classes={}
+ # Demand class is computed from train-only actual demand, never validation/test demand.
+ s=load("data/processed/scmd_monthly_series.parquet")
  for key,g in s.groupby(KEYS,sort=False,dropna=False):
   tr=g[g.SPLIT=="train"].sort_values("PERIOD")
   classes[tuple(key)]=demand_class(tr["MODEL_DEMAND"])[0]
-  ytr=pd.to_numeric(tr["MODEL_DEMAND"],errors="coerce").to_numpy(float)
-  e=np.diff(ytr); train_errors[tuple(key)]=e[np.isfinite(e)]
- val=f[f.SPLIT=="validation"].copy(); val.PERIOD=pd.to_datetime(val.PERIOD)
+ val=f[f.SPLIT=="validation"].copy()
+ val["PERIOD"]=pd.to_datetime(val.PERIOD)
  agg={c:{m:[[],[],[],[]] for m in ("normal","block_bootstrap")} for c in ("smooth","erratic","intermittent","lumpy")}
  counts={c:0 for c in agg}
  for key,g in val.groupby(KEYS,sort=False,dropna=False):
   g=g.sort_values("PERIOD").reset_index(drop=True); c=classes.get(tuple(key),"intermittent")
-  y=g.MODEL_DEMAND.to_numpy(float); q10=g.Q10.to_numpy(float); q50=g.Q50.to_numpy(float); q90=g.Q90.to_numpy(float); err=y-q50
+  y=pd.to_numeric(g.MODEL_DEMAND,errors="coerce").to_numpy(float)
+  q10=g.Q10.to_numpy(float); q50=g.Q50.to_numpy(float); q90=g.Q90.to_numpy(float)
+  periods=pd.to_datetime(g.PERIOD).dt.to_period("M").to_numpy()
+  errors=y-q50
+  history=[]; previous_period=None
   for t in range(len(g)):
-   history=np.r_[train_errors.get(tuple(key),np.array([])),err[:t]]
-   if len(history)<2: continue
-   for L in (1,2,3):
-    if t+L>len(g): continue
-    target=float(y[t:t+L].sum()); mu,sigma=infer_lead_time_distribution(q10[t],q50[t],q90[t],L)
-    n=agg[c]["normal"]; n[0].append(target); n[1].append(max(0.,float(mu-1.2815515655*sigma))); n[2].append(float(mu)); n[3].append(float(mu+1.2815515655*sigma))
-    samples=block_bootstrap_lead_time_samples(q50[t:t+L],history,L,n_boot=300,seed=19+t+L)
-    b=agg[c]["block_bootstrap"]; b[0].append(target); b[1].append(float(np.quantile(samples,.1))); b[2].append(float(np.quantile(samples,.5))); b[3].append(float(np.quantile(samples,.9)))
-    counts[c]+=1
+   # Never bridge missing calendar months or missing forecast errors in a block.
+   if previous_period is not None and periods[t].ordinal-previous_period.ordinal != 1:
+    history=[]
+   if not np.isfinite(errors[t]):
+    history=[]; previous_period=periods[t]; continue
+   if len(history)>=6:
+    for L in (1,2,3):
+     if t+L>len(g): continue
+     if any(periods[t+j].ordinal-periods[t].ordinal != j for j in range(L)):
+      continue
+     if not np.isfinite(y[t:t+L]).all() or not np.isfinite(q50[t:t+L]).all():
+      continue
+     target=float(y[t:t+L].sum())
+     mu,sigma=infer_lead_time_distribution(q10[t],q50[t],q90[t],L)
+     n=agg[c]["normal"]
+     n[0].append(target); n[1].append(max(0.,float(mu-1.2815515655*sigma)))
+     n[2].append(float(mu)); n[3].append(float(mu+1.2815515655*sigma))
+     samples=block_bootstrap_lead_time_samples(q50[t:t+L],np.asarray(history,float),L,n_boot=300,seed=19+t+L)
+     b=agg[c]["block_bootstrap"]
+     b[0].append(target); b[1].append(float(np.quantile(samples,.1)))
+     b[2].append(float(np.quantile(samples,.5))); b[3].append(float(np.quantile(samples,.9)))
+     counts[c]+=1
+   history.append(float(errors[t]))
+   history=history[-24:]
+   previous_period=periods[t]
  out={}
  for c in agg:
   n=stats(*agg[c]["normal"]); b=stats(*agg[c]["block_bootstrap"])
   out[c]={"normal_approximation_baseline":n,"dependence_aware_block_bootstrap":b,"normal_adequate":n["adequate"],"block_bootstrap_adequate":b["adequate"],"evaluated_origin_horizons":counts[c]}
- return {"class_definition":"ADI/CV2 from train-only demand; ADI threshold 1.32, CV2 threshold 0.49.","bootstrap_method":"Circular moving blocks of historical one-step errors: train-period naive forecast errors (actual minus previous month) plus validation forecast errors strictly before each origin; block length round(n_history^(1/3)); 300 simulations per origin/lead.","limitation":"Train-period residuals are a naive one-step error proxy because the pipeline does not persist in-sample train forecasts. Validation residuals are added only after they become historical. This is a prequential diagnostic, not independent external validation.","by_demand_class":out}
+ return {
+  "class_definition":"ADI/CV2 from train-only demand; ADI threshold 1.32, CV2 threshold 0.49.",
+  "bootstrap_method":"Circular moving blocks of genuine one-step validation forecast errors, strictly prior to each forecast origin; block length round(n_history^(1/3)); 300 simulations per origin/lead. History resets at missing months or missing errors.",
+  "limitation":"The first six consecutive validation forecast errors per series are a warm-up and are not evaluated. No training-period naive-error proxy or future validation/test residual is used.",
+  "by_demand_class":out
+ }
+
 
 def probability_calibration():
  raw=load("data/processed/raw_risk_probabilities.parquet"); inv=load("data/processed/simulated_inventory.parquet")
