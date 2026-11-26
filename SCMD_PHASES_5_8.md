@@ -17,7 +17,7 @@ The active generator includes stable, surge, gradual drift, volatility, forecast
 
 ## Research implementation notes (current)
 
-- Phase 4 reports the unmodified analytic RADCSR probability curve and enforces a held-out test acceptance gate across one representative case per series/scenario. There is no post-hoc cumulative-maximum envelope. The adjusted distribution tail is exported separately from the monotone risk-uplift probability so the two quantities are not conflated.
+- Phase 4 reports an analytic monotone reliability risk-uplift probability and enforces a held-out test acceptance gate across one representative case per series/scenario. There is no post-hoc cumulative-maximum envelope. The adjusted distribution tail is exported separately: the uplift probability is a monotone risk score/probability transform, not the unmodified tail probability of that adjusted distribution. Validation-only isotonic calibration is still required before interpreting it probabilistically.
 - Reliability severity includes the capped effective-horizon ratio. The no-cap and no-horizon ablations therefore change the evaluated risk probability; tests guard against accidentally identical ablations.
 - Phase 6 exports the distribution-based baseline methods and simulated labels separately. Monte Carlo and Wasserstein remain reference approximations; they are not claimed to be a full DRO optimisation solver.
 - Phase 7 reports only ablations that are scientifically defined from available inputs. A clinical/VEN ablation is omitted unless a provenance-complete, cohort-complete mapping is supplied; it is never fabricated from medicine names or demand.
