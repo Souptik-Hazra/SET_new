@@ -140,7 +140,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     )
     included = cohort.loc[cohort["COHORT_INCLUDED"], KEY]
     series = series.merge(included.assign(_included=True), on=KEY, how="inner")
-    series["DEMAND"] = series["MODEL_DEMAND"]
+    # Keep absent calendar months missing; zero is only valid for an observed source month.\n    series["DEMAND"] = series["MODEL_DEMAND"].where(~series["OBSERVATION_MISSING"])
 
     # Flag high values, do not automatically winsorise genuine demand events.
     q = series.groupby(KEY)["DEMAND"]
@@ -213,7 +213,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     return series, cohort, report
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
-                        min_periods=18, min_nonzero=6):
+                        min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
     root = Path(__file__).resolve().parents[1]
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
@@ -225,7 +225,7 @@ def run_phase1_from_csv(source=None, output_root="output", processed_root="data/
     diagnostics_path = output_root / "phase1_diagnostics.json"
     aggregate_scmd(source, aggregated)
     return build_monthly_series(aggregated, series_path, cohort_path, diagnostics_path,
-                                min_periods=min_periods, min_nonzero=min_nonzero)
+                                min_periods=min_periods, min_nonzero=min_nonzero,\n                                train_frac=train_frac, val_frac=val_frac)
 
 def run_phase1(raw_df=None, **kwargs):
     """Compatibility wrapper: Phase 1 now reads the configured SCMD CSV on disk."""

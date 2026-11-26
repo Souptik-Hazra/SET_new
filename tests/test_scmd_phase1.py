@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-
 from src.scmd_phase1 import compute_adi_cv2, classify_demand
 
 def test_scmd_demand_classification_all_four_patterns():
