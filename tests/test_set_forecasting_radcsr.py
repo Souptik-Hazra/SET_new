@@ -221,3 +221,17 @@ def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
     assert set(result.TEST) == {"paired_series_sign_flip"}
     assert (result.N_SERIES >= 2).all()
     assert result.HOLM_ADJUSTED_P.between(0, 1).all()
+
+
+def test_radcsr_horizon_cap_ablation_changes_risk_probability():
+    from src.set_forecasting.risk.radcsr import radcsr_ablations
+    x = sample().tail(5).copy()
+    x["Q10"] = 5.0; x["Q50"] = 10.0; x["Q90"] = 15.0
+    x["AVAILABLE_STOCK"] = 8.0; x["LEAD_TIME_MONTHS"] = 2
+    x["R_E"] = .2; x["R_B"] = .4; x["R_C"] = .6; x["R_D"] = .8; x["R_REL"] = .8
+    out = radcsr_ablations(x)
+    full = out.loc[out.METHOD == "RADCSR", "SHORTAGE_PROBABILITY"].to_numpy()
+    no_cap = out.loc[out.METHOD == "RADCSR_noCap", "SHORTAGE_PROBABILITY"].to_numpy()
+    no_horizon = out.loc[out.METHOD == "RADCSR_noHorizon", "SHORTAGE_PROBABILITY"].to_numpy()
+    assert not np.allclose(full, no_cap)
+    assert not np.allclose(full, no_horizon)
