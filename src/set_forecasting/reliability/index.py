@@ -13,8 +13,13 @@ def build_reliability_index(predictions,target_coverage=.90,window=8,weights=Non
     missing=set(required)-set(predictions.columns)
     if missing:raise ValueError(f"Missing reliability inputs: {sorted(missing)}")
     w=weights or {"error":.35,"bias":.25,"coverage":.25,"drift":.15}
-    if not np.isclose(sum(w.values()),1) or any(v<0 for v in w.values()):
-        raise ValueError("Weights must be non-negative and sum to one")
+    expected={"error", "bias", "coverage", "drift"}
+    if set(w) != expected or any(not np.isfinite(float(v)) or float(v) < 0 for v in w.values()) or not np.isclose(sum(w.values()), 1):
+        raise ValueError("Weights must define error, bias, coverage and drift; be finite, non-negative and sum to one")
+    if predictions.duplicated(KEYS + ["PERIOD"]).any():
+        raise ValueError("Reliability input must have one row per series and period")
+    if not 0 < float(target_coverage) < 1 or int(window) < 1 or int(min_history) < 1:
+        raise ValueError("target_coverage must be in (0,1); window and min_history must be positive")
     output=[]
     for _,g in predictions.groupby(KEYS,sort=False,dropna=False):
         g=g.sort_values("PERIOD").copy()
