@@ -1,9 +1,27 @@
-# Local source datasets and generated data
-/data/
-!/data/.gitkeep
+# Raw and processed datasets: keep data private and out of Git.
+/data/*
+!/data/raw/
+!/data/processed/
+!/data/reference/
+/data/raw/*
+!/data/raw/.gitkeep
+/data/processed/*
+!/data/processed/.gitkeep
+/data/reference/*
+!/data/reference/.gitkeep
 /dataset/
 /datasets/
-/output/
+
+# Generated reports and large outputs.
+/output/*
+!/output/tables/
+!/output/figures/
+/output/tables/*
+!/output/tables/.gitkeep
+/output/figures/*
+!/output/figures/.gitkeep
+
+# Legacy large/local project directories.
 /SET PROJECT/
 /PharmacyTransactionalDataset/
 
