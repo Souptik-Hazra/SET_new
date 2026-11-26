@@ -214,5 +214,5 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         "SCMD does not contain observed stock-on-hand, procurement receipts, supplier lead times or stockout events. Therefore simulated Brier scores, simulated stockout labels and synthetic stress tests cannot establish observed hospital stockout prediction performance. Clinical priority conclusions require verified VEN provenance and complete cohort coverage.",
         ""
     ]
-    (out/"final_verdict.md").write_text("\\n".join(verdict),encoding="utf-8")
+    (out/"final_verdict.md").write_text("\n".join(verdict),encoding="utf-8")
     return report
