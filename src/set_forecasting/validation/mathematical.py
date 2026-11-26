@@ -85,14 +85,39 @@ def probability_calibration():
    m=(p>=lo)&((p<hi) if hi<1 else (p<=hi))
    if m.any(): ece+=float(m.mean()*abs(y[m].mean()-p[m].mean()))
   return {"n":len(y),"brier":float(np.mean((p-y)**2)),"ece_10":ece,"calibration_in_large":float(y.mean()-p.mean())}
- v=x[x.SPLIT=="validation"].copy(); t=x[x.SPLIT=="test"].copy()
- if len(v)<20 or v.STOCKOUT_LABEL.nunique()<2: raise ValueError(f"Insufficient validation labels for isotonic calibration: n={len(v)}, classes={v.STOCKOUT_LABEL.nunique()}")
- iso=IsotonicRegression(y_min=0,y_max=1,out_of_bounds="clip").fit(v.SHORTAGE_PROBABILITY,v.STOCKOUT_LABEL)
- v["CAL"]=iso.predict(v.SHORTAGE_PROBABILITY); t["CAL"]=iso.predict(t.SHORTAGE_PROBABILITY)
- vm=metric(v,"SHORTAGE_PROBABILITY"); vf=metric(v,"CAL"); tm=metric(t,"CAL")
- threshold_ok=lambda m: m["ece_10"] is not None and m["calibration_in_large"] is not None and m["ece_10"]<=.10 and abs(m["calibration_in_large"])<=.05
- val_pass=bool(threshold_ok(vf)); test_pass=bool(threshold_ok(tm)); passed=val_pass and test_pass
- return {"validation_raw":vm,"validation_isotonic_fit_in_sample":vf,"validation_calibration_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":val_pass},"held_out_test_after_validation_isotonic":tm,"held_out_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":test_pass},"validation_note":"The validation calibrator is fitted on validation labels; its fit-sample metrics are in-sample. Held-out test evaluation is the independent check.","conclusion":"Validation-fit and held-out descriptive calibration gates passed on simulated labels." if passed else "Calibration did not pass both validation-fit and held-out gates. RADCSR_PROBABILITY must not be interpreted as a calibrated probability."}
+ v=x[x.SPLIT=="validation"].copy().sort_values("PERIOD")
+ test=x[x.SPLIT=="test"].copy()
+ periods=np.sort(v.PERIOD.unique())
+ if len(periods)<2: raise ValueError(f"Insufficient distinct validation periods for temporal calibration split: n_periods={len(periods)}")
+ cut=max(1,int(len(periods)*.70))
+ fit_periods=set(periods[:cut]); eval_periods=set(periods[cut:])
+ fit=v[v.PERIOD.isin(fit_periods)].copy(); val_eval=v[v.PERIOD.isin(eval_periods)].copy()
+ if len(fit)<20 or fit.STOCKOUT_LABEL.nunique()<2:
+  raise ValueError(f"Insufficient validation calibration-fit labels: n={len(fit)}, classes={fit.STOCKOUT_LABEL.nunique()}")
+ if val_eval.empty:
+  raise ValueError("Validation calibration evaluation partition is empty after chronological split")
+ iso=IsotonicRegression(y_min=0,y_max=1,out_of_bounds="clip").fit(fit.SHORTAGE_PROBABILITY,fit.STOCKOUT_LABEL)
+ fit["CAL"]=iso.predict(fit.SHORTAGE_PROBABILITY)
+ val_eval["CAL"]=iso.predict(val_eval.SHORTAGE_PROBABILITY)
+ test["CAL"]=iso.predict(test.SHORTAGE_PROBABILITY)
+ val_raw=metric(val_eval,"SHORTAGE_PROBABILITY")
+ val_cal=metric(val_eval,"CAL")
+ test_cal=metric(test,"CAL")
+ gate=lambda m: bool(m["ece_10"] is not None and m["calibration_in_large"] is not None and m["ece_10"]<=.10 and abs(m["calibration_in_large"])<=.05)
+ val_pass=gate(val_cal); test_pass=gate(test_cal)
+ passed=val_pass and test_pass
+ return {
+  "target":"RADCSR_PROBABILITY / SHORTAGE_PROBABILITY",
+  "validation_calibrator_fit":{"n":len(fit),"classes":int(fit.STOCKOUT_LABEL.nunique()),"period_start":str(min(fit_periods)),"period_end":str(max(fit_periods))},
+  "validation_evaluation_raw":val_raw,
+  "validation_evaluation_after_validation_fit":val_cal,
+  "validation_calibration_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":val_pass},
+  "held_out_test_after_validation_fit":test_cal,
+  "held_out_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":test_pass},
+  "method":"Chronological 70/30 split within validation: isotonic calibrator fitted on the earlier 70%, evaluated on the later 30%; same frozen calibrator evaluated on held-out test.",
+  "conclusion":"Validation-period holdout and held-out test calibration gates passed on simulated labels." if passed else "Calibration did not pass both validation-period holdout and held-out test gates. RADCSR_PROBABILITY must not be interpreted as a calibrated probability."
+ }
+
 
 def signal_perturbations():
  n=40
@@ -132,7 +157,7 @@ def run():
  sweeps=monotonicity(); failed=[x for x in sweeps if not x["pass"]]
  result={"disclaimer":DISCLAIMER,"probability_formulas":FORMULAS,"monotonicity_sweeps":sweeps}
  # A monotonicity failure is a hard stop: print the exact sequences and do not run later checks.
- print(DISCLAIMER); print("1. MONOTONICITY SWEEPS")
+ print(DISCLAIMER); print("DUAL PROBABILITY FORMULAS"); print(json.dumps(FORMULAS,indent=2)); print("1. MONOTONICITY SWEEPS")
  for x in sweeps: print(x["quantity"],"|",x["regime"],"|","PASS" if x["pass"] else "FAIL","| sequence=",x["sequence"])
  if failed:
   print("MONOTONICITY FAILURE: stopping. Failing sequences above are verbatim.")
