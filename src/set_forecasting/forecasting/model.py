@@ -16,56 +16,65 @@ def _score(g,name):
 
 def train_and_predict(series,min_train_rows=100,random_state=42):
     x=series.copy()
-    # Train-only 99.5th percentile winsorisation; preserve original target for evaluation.
-    x["MODEL_DEMAND_WINSORIZED"]=np.nan;x["OUTLIER_995_FLAG"]=False;x["_ORIGINAL_MODEL_DEMAND"]=pd.to_numeric(x.MODEL_DEMAND,errors="coerce")
+    x["MODEL_DEMAND_WINSORIZED"]=np.nan;x["OUTLIER_995_FLAG"]=False
+    x["_ORIGINAL_MODEL_DEMAND"]=pd.to_numeric(x.MODEL_DEMAND,errors="coerce")
     for _,idx in x.groupby(SERIES_KEYS,sort=False,dropna=False).groups.items():
-        g=x.loc[idx];train=g[(g.SPLIT=="train")&(~g.OBSERVATION_MISSING.astype(bool))]
-        positive=pd.to_numeric(train.MODEL_DEMAND,errors="coerce");positive=positive[positive>0]
+        g=x.loc[idx];train_g=g[(g.SPLIT=="train")&(~g.OBSERVATION_MISSING.astype(bool))]
+        positive=pd.to_numeric(train_g.MODEL_DEMAND,errors="coerce");positive=positive[positive>0]
         threshold=float(positive.quantile(.995)) if len(positive) else np.inf
         values=pd.to_numeric(g.MODEL_DEMAND,errors="coerce")
         x.loc[idx,"OUTLIER_995_FLAG"]=values>threshold
         x.loc[idx,"MODEL_DEMAND_WINSORIZED"]=np.where(values>0,np.minimum(values,threshold),values)
-    # Feature lags are generated from winsorised history, never from the full target.
     x[TARGET]=x.MODEL_DEMAND_WINSORIZED
     features=create_features(x)
     features["MODEL_DEMAND"]=features["_ORIGINAL_MODEL_DEMAND"]
     features["SERIES_ID"]=features[SERIES_KEYS].astype(str).agg("|".join,axis=1)
     categorical=[]
-    for c in SERIES_KEYS:
-        name=c+"_CAT";features[name]=features[c].astype("category");categorical.append(name)
-    cols=[c for c in FEATURES if c in features]+categorical
-    for c in FEATURES:
-        if c in features:features[c]=pd.to_numeric(features[c],errors="coerce")
+    for col in SERIES_KEYS:
+        name=col+"_CAT";features[name]=features[col].astype("category");categorical.append(name)
+    cols=[c for c in FEATURES if c in features.columns]+categorical
+    for col in FEATURES:
+        if col in features:features[col]=pd.to_numeric(features[col],errors="coerce")
     train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
-    val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=[ "MODEL_DEMAND_WINSORIZED"])
+    val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
     test=features[(features.SPLIT=="test")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND"])
     models=[];status="naive_fallback"
     try:
         import lightgbm as lgb
         from lightgbm import LGBMRegressor
         if len(train)>=min_train_rows and len(val)>=20:
-            for q in (.1,.5,.9):
-                m=LGBMRegressor(objective="quantile",alpha=q,n_estimators=800,learning_rate=.03,
-                  num_leaves=31,min_child_samples=30,subsample=.85,colsample_bytree=.85,
-                  verbosity=-1,random_state=random_state,n_jobs=-1)
-                m.fit(train[cols],train["MODEL_DEMAND_WINSORIZED"],categorical_feature=categorical,eval_set=[(val[cols],val["MODEL_DEMAND_WINSORIZED"])],
-                  callbacks=[lgb.early_stopping(50,verbose=False)])
-                models.append(m)
+            for quantile in (.1,.5,.9):
+                model=LGBMRegressor(objective="quantile",alpha=quantile,n_estimators=800,
+                    learning_rate=.03,num_leaves=31,min_child_samples=30,subsample=.85,
+                    colsample_bytree=.85,verbosity=-1,random_state=random_state,n_jobs=-1)
+                model.fit(train[cols],train["MODEL_DEMAND_WINSORIZED"],categorical_feature=categorical,
+                    eval_set=[(val[cols],val["MODEL_DEMAND_WINSORIZED"])],
+                    callbacks=[lgb.early_stopping(50,verbose=False)])
+                models.append(model)
             status="quantile_lightgbm"
-    except ImportError:pass
-    if len(test):
+    except ImportError:
+        pass
+    def predict(part):
+        part=part.copy()
+        if part.empty:return part
         if models:
-            raw=np.column_stack([np.maximum(0,m.predict(test[cols])) for m in models])
-            test[["Q10","Q50","Q90"]]=np.sort(raw,axis=1)
+            raw=np.column_stack([np.maximum(0,m.predict(part[cols])) for m in models])
+            part[["Q10","Q50","Q90"]]=np.sort(raw,axis=1)
         else:
-            test["Q50"]=test.LAG_1.fillna(test.LAG_12).fillna(0).clip(lower=0)
-            test["Q10"]=test.Q50*.5;test["Q90"]=test.Q50*1.5
-        test["FORECAST_MODEL"]=status
-        test["NAIVE_LAST"]=test.LAG_1.fillna(0).clip(lower=0)
-        test["NAIVE_SEASONAL_12"]=test.LAG_12.fillna(test.NAIVE_LAST).clip(lower=0)
+            part["Q50"]=part.LAG_1.fillna(part.LAG_12).fillna(0).clip(lower=0)
+            part["Q10"]=part.Q50*.5;part["Q90"]=part.Q50*1.5
+        part["FORECAST_MODEL"]=status
+        part["NAIVE_LAST"]=part.LAG_1.fillna(0).clip(lower=0)
+        part["NAIVE_SEASONAL_12"]=part.LAG_12.fillna(part.NAIVE_LAST).clip(lower=0)
+        return part
+    validation_pred=predict(val);test_pred=predict(test)
+    all_predictions=pd.concat([validation_pred,test_pred],ignore_index=True)
     metrics=[]
-    if len(test):
-        metrics.append(_score(test,"QuantileLightGBM" if status=="quantile_lightgbm" else "NaiveFallback"))
+    if len(test_pred):
+        metrics.append(_score(test_pred,"QuantileLightGBM" if status=="quantile_lightgbm" else "NaiveFallback"))
         for col,name in [("NAIVE_LAST","PreviousObservationNaive"),("NAIVE_SEASONAL_12","SeasonalNaive12")]:
-            z=test.copy();z["Q10"]=z[col]*.5;z["Q50"]=z[col];z["Q90"]=z[col]*1.5;metrics.append(_score(z,name))
-    return features,test,pd.DataFrame(metrics),{"model":status,"train_rows":len(train),"validation_rows":len(val),"test_rows":len(test)}
+            z=test_pred.copy();z["Q10"]=z[col]*.5;z["Q50"]=z[col];z["Q90"]=z[col]*1.5
+            metrics.append(_score(z,name))
+    report={"model":status,"train_rows":len(train),"validation_rows":len(val),
+      "test_rows":len(test_pred),"validation_predictions":len(validation_pred)}
+    return features,all_predictions,pd.DataFrame(metrics),report
