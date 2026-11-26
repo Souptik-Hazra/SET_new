@@ -12,7 +12,7 @@ def interval_baselines(predictions,target_coverage=.90,window=8):
         state_ewma=0.
         methods={m:[] for m in ["Static","RollingQuantile","EWMA","ACI","DtACI","AdaPI","EnbPI"]}
         for i in range(len(g)):
-            base=max((q90[i]-q10[i])/2,1e-6);prior=np.asarray(history[-window:],float)
+            base=max((q90[i]-q10[i])/2*1.282,1e-6);prior=np.asarray(history[-window:],float)
             rq=float(np.quantile(prior,target_coverage,method="higher")) if len(prior)>=2 else base
             ew=float(pd.Series(prior).ewm(alpha=.25,adjust=False).mean().iloc[-1]*1.645) if len(prior) else base
             enb=float(np.quantile(prior,target_coverage,method="higher")) if len(prior)>=3 else base
