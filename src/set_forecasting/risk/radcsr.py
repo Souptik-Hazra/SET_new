@@ -130,6 +130,15 @@ def radcsr_ablations(frame, kappa_sigma=0.75, kappa_mu=0.50, kappa_l=1.5,
         "RADCSR_noHorizon": (x.R_REL.to_numpy(float), kappa_sigma, kappa_mu, 0.0, horizon_cap),
         "RADCSR_singleSignal": (signals["error"], kappa_sigma, kappa_mu, kappa_l, horizon_cap),
     }
+    if "R_B_SYMMETRIC" in x.columns:
+        symmetric_r = np.clip(
+            w["error"] * signals["error"] +
+            w["bias"] * x["R_B_SYMMETRIC"].to_numpy(float) +
+            w["coverage"] * signals["coverage"] +
+            w["drift"] * signals["drift"], 0.0, 1.0)
+        variants["RADCSR_symmetricBias"] = (
+            symmetric_r, kappa_sigma, kappa_mu, kappa_l, horizon_cap)
+
     if clinical_mapping is not None:
         from .clinical import REQUIRED as VEN_REQUIRED
         if not set(VEN_REQUIRED).issubset(clinical_mapping.columns):
