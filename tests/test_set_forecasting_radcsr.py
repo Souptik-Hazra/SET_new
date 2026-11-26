@@ -341,7 +341,8 @@ def test_inventory_sensitivity_grid_runs_on_shared_scenario_streams():
     x["LEAD_TIME_MONTHS"] = 2
     result = inventory_sensitivity(x, service_levels=(.95,),
                                    initial_covers=(1., 2.), target_covers=(2.,))
-    assert len(result) == 2
+    assert len(result) == 6
+    assert set(result.BASE_LEAD_TIME_MONTHS) == {1, 2, 3}
     assert set(result.INITIAL_COVER_MONTHS) == {1.0, 2.0}
     assert result.SIMULATED_STOCKOUT_RATE.between(0, 1).all()
 
