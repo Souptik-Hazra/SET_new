@@ -7,13 +7,13 @@ SETReliable studies whether reliability-adaptive demand-conditioned shortage ris
 RADCSR is a three-layer pipeline:
 1. Quantile forecasting: global LightGBM P10/P50/P90 forecasts, compared with previous-observation and seasonal-12 naive baselines.
 2. Reliability monitoring: prequential error, bias, 90% conformal coverage and CUSUM drift signals form (R_{rel}). P10–P90 itself is an 80% interval; its PICP is reported as PICP_80.
-3. Risk adjustment: adjusted spread, conditional mean and effective planning horizon produce a shortage probability from the forecast distribution and simulated availability.
+3. Risk adjustment: a monotone reliability-uplift score is calculated from the baseline distribution tail and capped effective horizon. The adjusted-distribution tail is reported separately; validation-only isotonic calibration maps the score to a probability against simulated labels.
 
 ## Dataset boundary
 
 The NHSBSA Secondary Care Medicines Indicative Price dataset contains monthly organisation, VMP, unit, quantity and indicative-cost records. It does not contain on-hand inventory, purchase orders, supplier lead times or observed stockout events. Positive quantity is a modelling proxy, not confirmed consumption. Negative quantity is retained separately and is not automatically treated as demand.
 
-Every inventory level, lead time, stress scenario and stockout label generated here is **SIMULATED**. The project does not claim to detect observed hospital stockouts.
+Every inventory level, lead time, stress scenario and stockout label generated here is **SIMULATED**. The project does not claim to detect observed hospital stockouts. Statistical comparisons with fewer than 10 independent organisation/VMP/unit series are marked descriptive and cannot produce significance claims.
 
 ## Layout
 
