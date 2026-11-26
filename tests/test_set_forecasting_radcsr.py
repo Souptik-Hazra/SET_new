@@ -222,6 +222,9 @@ def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
     assert set(result.TEST) == {"paired_series_sign_flip"}
     assert (result.N_SERIES >= 2).all()
     assert result.HOLM_ADJUSTED_P.between(0, 1).all()
+    assert (result.INFERENCE_STATUS == "LOW_CLUSTER_COUNT_DESCRIPTIVE_ONLY").all()
+    assert not result.SIGNIFICANT_WIN.any()
+    assert not result.SIGNIFICANT_LOSS.any()
 
 
 def test_radcsr_horizon_cap_ablation_changes_risk_probability():
@@ -236,3 +239,22 @@ def test_radcsr_horizon_cap_ablation_changes_risk_probability():
     no_horizon = out.loc[out.METHOD == "RADCSR_noHorizon", "SHORTAGE_PROBABILITY"].to_numpy()
     assert not np.allclose(full, no_cap)
     assert not np.allclose(full, no_horizon)
+
+
+def test_radcsr_rejects_nonpositive_lead_and_nonfinite_coefficients():
+    import pytest
+    with pytest.raises(ValueError, match="positive"):
+        radcsr_probability(8.0, 10.0, 13.0, 15.0, 0.0, .5)
+    with pytest.raises(ValueError, match="finite"):
+        radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, .5, kappa_sigma=np.nan)
+
+
+def test_inventory_rejects_invalid_service_level():
+    import pytest
+    x = sample(4).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = x.MODEL_DEMAND
+    x["Q10"] = 5.0; x["Q90"] = 15.0
+    x["LEAD_TIME_MONTHS"] = 2
+    with pytest.raises(ValueError, match="service_level"):
+        simulate_inventory(x, service_level=1.0)
