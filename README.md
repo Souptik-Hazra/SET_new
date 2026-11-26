@@ -44,3 +44,16 @@ Generated intermediates go under `data/processed/`; reports and tables go under 
 ## Clinical priority
 
 VEN weighting is optional and is only enabled when a medicine-level mapping with source name, source version and source URL is supplied at `data/reference/clinical_ven_mapping.csv`. No clinical category is inferred from demand, product name or model output.
+
+
+## Active dataset and research scope
+
+The supported workflow is the monthly NHSBSA SCMD pipeline. Read [SCMD_MIGRATION.md](SCMD_MIGRATION.md) and [SCMD_PHASES_1_4.md](SCMD_PHASES_1_4.md) before running experiments. The older pharmacy-transaction specification is historical only. Positive reported quantity is a modelling proxy, not verified consumption. All inventory, lead-time and stockout outcomes are simulated; SCMD alone does not support real hospital stockout prediction claims.
+
+Run the supported end-to-end workflow from the repository root:
+
+```bash
+python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicines.csv
+```
+
+The pipeline records its resolved configuration in `output/resolved_config.json`.

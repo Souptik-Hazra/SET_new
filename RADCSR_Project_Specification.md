@@ -1,3 +1,12 @@
+> **STATUS: HISTORICAL SPECIFICATION — NOT THE ACTIVE DATA CONTRACT**  
+> This document was originally written for pharmacy transaction data and is retained for research-history traceability. It is **not** an implementation instruction for the current repository.  
+>
+> The supported dataset and implementation are the monthly NHSBSA Secondary Care Medicines Indicative Price (SCMD) dataset. The active grain is `ODS_CODE × VMP_SNOMED_CODE × UNIT_OF_MEASURE_IDENTIFIER × YEAR_MONTH`. The candidate target is positive reported quantity (`MODEL_DEMAND`), not verified consumption. Missing months remain explicitly unobserved. Inventory, lead times and stockout labels are simulated; clinical VEN classifications are used only with externally verified provenance.
+>
+> Use [SCMD_MIGRATION.md](SCMD_MIGRATION.md), [SCMD_PHASES_1_4.md](SCMD_PHASES_1_4.md), [SCMD_PHASES_5_8.md](SCMD_PHASES_5_8.md), and [SCMD_CODE_REVIEW_REMEDIATION.md](SCMD_CODE_REVIEW_REMEDIATION.md) as the active specification. Daily/weekly pharmacy assumptions and rule-generated VEN labels below are historical and must not be implemented against SCMD.
+
+---
+
 # PROJECT SPECIFICATION
 # A Risk-Aware, Reliability-Adaptive Framework for Early Detection of Medication Shortages Under Changing Demand Conditions
 

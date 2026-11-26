@@ -8,3 +8,8 @@ Run after Phases 1–4: `python run_phase5_8_scmd.py`.
 8. Series-level paired bootstrap (2,000 resamples) and Holm adjustment on interval-score comparisons.
 
 **Research limitation:** Inventory outcomes are SIMULATED. Stockout labels are not observed events. SCMD has no stock-on-hand, receipts, purchase orders, supplier lead times or observed stockout data. Monte Carlo and Wasserstein-style baselines are simplified sensitivity references, not full optimisation solvers.
+
+
+## Scenario implementation status
+
+The active generator includes stable, surge, gradual drift, volatility, forecast-bias, lead-time shock, combined, intermittent-demand, and correlated-surge streams. Each series/scenario receives a deterministic independent random stream derived from the global seed and series key. Scenario metadata records the shift start index and shift magnitude. These remain synthetic stress tests, not observed hospital demand regimes.

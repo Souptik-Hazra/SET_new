@@ -56,7 +56,7 @@ def test_seven_scenarios_are_isolated_and_inventory_is_simulated():
     x["Q10"]=x.MODEL_DEMAND*.8;x["Q50"]=x.MODEL_DEMAND;x["Q90"]=x.MODEL_DEMAND*1.2
     x["R_REL"]=.2;x["R_E"]=.1;x["R_B"]=.1;x["R_C"]=.1;x["R_D"]=0
     s=make_scenarios(x)
-    assert len(s.SCENARIO_ID.unique())==7
+    assert len(s.SCENARIO_ID.unique())==9
     stable=s[s.SCENARIO_ID=="S1_Stable"]
     bias=s[s.SCENARIO_ID=="S5_Bias"]
     assert np.allclose(stable.Q50,x.Q50)
@@ -157,3 +157,20 @@ def test_radcsr_ablation_uses_configured_coefficients():
         default.loc[default.METHOD == "RADCSR_noBias", "SHORTAGE_PROBABILITY"],
         configured.loc[configured.METHOD == "RADCSR_noBias", "SHORTAGE_PROBABILITY"],
     )
+
+
+def test_scenario_generation_is_reproducible_and_includes_sparse_and_correlated_cases():
+    from src.set_forecasting.risk.simulation import SCENARIOS
+    x = sample().tail(12).copy()
+    x["Q10"] = x.MODEL_DEMAND * .8
+    x["Q50"] = x.MODEL_DEMAND
+    x["Q90"] = x.MODEL_DEMAND * 1.2
+    first = make_scenarios(x, seed=123)
+    second = make_scenarios(x, seed=123)
+    pd.testing.assert_frame_equal(first, second)
+    assert set(SCENARIOS).issubset(set(first.SCENARIO_ID))
+    assert {"SHIFT_START_INDEX", "SHIFT_MAGNITUDE"}.issubset(first.columns)
+    sparse = first[first.SCENARIO_ID == "S8_Intermittent"]
+    assert (sparse.SCENARIO_DEMAND == 0).any()
+    correlated = first[first.SCENARIO_ID == "S9_CorrelatedSurge"]
+    assert np.isfinite(correlated.SCENARIO_DEMAND).all()

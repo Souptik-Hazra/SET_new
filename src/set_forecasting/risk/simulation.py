@@ -1,26 +1,68 @@
 """Seven synthetic scenarios, periodic-review inventory and comparable risk baselines."""
+import hashlib
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from .radcsr import KEYS,infer_lead_time_distribution
-SCENARIOS=["S1_Stable","S2_Surge","S3_Drift","S4_Volatility","S5_Bias","S6_LeadTimeShock","S7_Combined"]
+SCENARIOS=["S1_Stable","S2_Surge","S3_Drift","S4_Volatility","S5_Bias","S6_LeadTimeShock","S7_Combined","S8_Intermittent","S9_CorrelatedSurge"]
 
-def make_scenarios(predictions,seed=42):
-    rng=np.random.default_rng(seed);frames=[]
-    for _,g in predictions.groupby(KEYS,sort=False,dropna=False):
-        g=g.sort_values("PERIOD").copy();base=np.maximum(g.MODEL_DEMAND.to_numpy(float),0)
+def _stable_seed(seed, key):
+    token = "|".join(map(str, key)).encode("utf-8")
+    digest = hashlib.sha256(token).digest()
+    return (int(seed) + int.from_bytes(digest[:4], "big")) % (2**32)
+
+
+def make_scenarios(predictions, seed=42):
+    """Create reproducible, series-isolated stress streams with explicit shift metadata."""
+    frames = []
+    for key, group in predictions.groupby(KEYS, sort=False, dropna=False):
+        group = group.sort_values("PERIOD").copy()
+        base = np.maximum(group.MODEL_DEMAND.to_numpy(float), 0)
+        start = len(base) // 3
+        duration = max(1, len(base) // 3)
         for name in SCENARIOS:
-            x=g.copy();demand=base.copy();lead=np.full(len(x),2,dtype=int)
-            if name in ("S2_Surge","S7_Combined"):
-                start=len(demand)//3;demand[start:start+max(1,len(demand)//3)]*=1.5
-            if name in ("S3_Drift","S7_Combined"):demand*=1+.02*np.arange(len(demand))
-            if name in ("S4_Volatility","S7_Combined"):demand=np.maximum(0,demand*rng.lognormal(0,.35,len(demand)))
-            if name=="S5_Bias":
-                for col in ["Q10","Q50","Q90"]:x[col]=np.maximum(0,x[col].to_numpy(float)*1.2)
-            if name in ("S6_LeadTimeShock","S7_Combined"):lead+=2
-            x["SCENARIO_ID"]=name;x["SCENARIO_DEMAND"]=demand;x["LEAD_TIME_MONTHS"]=lead
-            x["STOCKOUTS_ARE_OBSERVED"]=0;x["OUTCOME_TYPE"]="SIMULATED";frames.append(x)
-    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame()
+            rng = np.random.default_rng(_stable_seed(seed, (*key, name)))
+            x = group.copy()
+            demand = base.copy()
+            lead = np.full(len(x), 2, dtype=int)
+            magnitude = 0.0
+            if name in ("S2_Surge", "S7_Combined"):
+                demand[start:start + duration] *= 1.5
+                magnitude = 0.5
+            if name in ("S3_Drift", "S7_Combined"):
+                demand *= 1 + .02 * np.arange(len(demand))
+                magnitude = .02
+            if name in ("S4_Volatility", "S7_Combined"):
+                demand = np.maximum(0, demand * rng.lognormal(0, .35, len(demand)))
+                magnitude = .35
+            if name == "S5_Bias":
+                for col in ["Q10", "Q50", "Q90"]:
+                    x[col] = np.maximum(0, x[col].to_numpy(float) * 1.2)
+                magnitude = .2
+            if name in ("S6_LeadTimeShock", "S7_Combined"):
+                lead += 2
+                magnitude = 2
+            if name == "S8_Intermittent":
+                keep = rng.random(len(demand)) < .5
+                demand = np.where(keep, demand * 2.0, 0.0)
+                magnitude = .5
+            if name == "S9_CorrelatedSurge":
+                innovations = rng.normal(0, .12, len(demand))
+                ar = np.zeros(len(demand))
+                for i in range(1, len(ar)):
+                    ar[i] = .8 * ar[i - 1] + innovations[i]
+                demand = demand * np.exp(np.clip(ar, -1.0, 1.0))
+                demand[start:start + duration] *= 1.5
+                magnitude = .5
+            x["SCENARIO_ID"] = name
+            x["SCENARIO_DEMAND"] = demand
+            x["LEAD_TIME_MONTHS"] = lead
+            x["SHIFT_START_INDEX"] = start if name != "S1_Stable" else -1
+            x["SHIFT_MAGNITUDE"] = magnitude
+            x["STOCKOUTS_ARE_OBSERVED"] = 0
+            x["OUTCOME_TYPE"] = "SIMULATED"
+            frames.append(x)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover=3.):
     """Periodic review: receive → serve → measure lead-time shortage → reorder.
@@ -74,14 +116,14 @@ def _wasserstein_tail(samples,threshold,epsilon):
         if budget<=1e-12:break
     return float(np.clip(base+moved/n,0,1))
 
-def risk_baseline_probabilities(frame):
+def risk_baseline_probabilities(frame, seed=42)
     """Static, Rolling Quantile, EWMA, ACI, Monte Carlo and W1-DRO risk methods."""
     rows=[]
     for _,g in frame.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         g=g.sort_values("PERIOD");q10=g.Q10.to_numpy(float);q50=g.Q50.to_numpy(float);q90=g.Q90.to_numpy(float)
         avail=g.AVAILABLE_STOCK.to_numpy(float);lead=g.LEAD_TIME_MONTHS.to_numpy(float)
         mu,sigma=infer_lead_time_distribution(q10,q50,q90,lead)
-        residual=g.DEMAND.to_numpy(float)-q50;rng=np.random.default_rng(42)
+        residual=g.DEMAND.to_numpy(float)-q50;rng=np.random.default_rng(_stable_seed(seed, (*_, "risk_baselines")))
         for i in range(len(g)):
             hist=residual[max(0,i-8):i];base_sigma=max(float(sigma[i]),1e-6)
             samples=mu[i]+hist*np.sqrt(lead[i]) if len(hist) else np.array([mu[i]])

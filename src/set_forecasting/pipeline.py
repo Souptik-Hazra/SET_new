@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from .data.source import get_project_root
 from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
@@ -12,13 +13,30 @@ from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_pro
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
-    out=Path(output_dir);proc=Path(processed_dir)
-    config_path=Path("config/config.yaml")
-    cfg=yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    root = get_project_root()
+    def project_path(value):
+        path = Path(value)
+        return path if path.is_absolute() else root / path
+
+    series_path = project_path(series_path)
+    out = project_path(output_dir)
+    proc = project_path(processed_dir)
+    config_path = root / "config" / "config.yaml"
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+    if cfg is None:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
+    resolved_config = dict(cfg)
+    resolved_config.setdefault("seed", seed)
+    resolved_config.setdefault("evaluation", {})
+    resolved_config["evaluation"]["bootstrap_resamples"] = n_boot
+    (out / "tables").mkdir(parents=True, exist_ok=True)
+    (out / "resolved_config.json").write_text(json.dumps(resolved_config, indent=2, default=str), encoding="utf-8")
     rel_cfg=cfg.get("reliability",{});risk_cfg=cfg.get("radcsr",{});inv_cfg=cfg.get("inventory",{});data_cfg=cfg.get("data",{})
     (out/"tables").mkdir(parents=True,exist_ok=True);(out/"figures").mkdir(parents=True,exist_ok=True);proc.mkdir(parents=True,exist_ok=True)
     series=pd.read_parquet(series_path)
-    features,pred,forecast_metrics,forecast_report=train_and_predict(series,winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
+    features,pred,forecast_metrics,forecast_report=train_and_predict(series,random_state=int(seed),winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
     test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
@@ -62,7 +80,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         result=radcsr_probability(g.Q10.to_numpy(),g.Q50.to_numpy(),g.Q90.to_numpy(),
             g.AVAILABLE_STOCK.to_numpy(),g.LEAD_TIME_MONTHS.to_numpy(),g.R_REL.to_numpy(),
             kappa_sigma=float(risk_cfg.get("kappa_sigma",.75)),kappa_mu=float(risk_cfg.get("kappa_mu",.50)),
-            kappa_l=float(risk_cfg.get("kappa_l",1.5)))
+            kappa_l=float(risk_cfg.get("kappa_l",1.5)),
+            horizon_cap=risk_cfg.get("horizon_cap",2.0))
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g,
@@ -74,7 +93,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         ablation_rows.append(pd.concat([g[keys+["SPLIT"]].reset_index(drop=True),ab],axis=1))
     rad_df=pd.concat(rad,ignore_index=True);rad_df["METHOD"]="RADCSR"
     ablation_df=pd.concat(ablation_rows,ignore_index=True)
-    baseline=risk_baseline_probabilities(joined)
+    baseline=risk_baseline_probabilities(joined, seed=seed)
     rad_prob=rad_df[keys+["SPLIT","METHOD","RADCSR_PROBABILITY"]].rename(columns={"RADCSR_PROBABILITY":"SHORTAGE_PROBABILITY"})
     raw_probabilities=pd.concat([baseline,rad_prob,ablation_df],ignore_index=True)
     # Calibrate every risk method using validation-only synthetic labels; score only held-out test.
@@ -91,7 +110,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(
             out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
     clinical_status="Not computed: no verified clinical VEN mapping supplied."
-    ven_path=Path("data/reference/clinical_ven_mapping.csv")
+    ven_path=root / "data" / "reference" / "clinical_ven_mapping.csv"
     if ven_path.exists():
         mapping=load_verified_ven_mapping(ven_path)
         clinical_detail,clinical_summary=compare_clinical_priority(rad_df[rad_df.SPLIT=="test"],mapping)
