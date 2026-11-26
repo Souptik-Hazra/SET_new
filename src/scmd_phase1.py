@@ -124,6 +124,20 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                           N_NONZERO=n_nonzero, COHORT_INCLUDED=not reason,
                           EXCLUSION_REASON=";".join(reason)))
     cohort = pd.DataFrame(stats)
+    monthly_summary = agg.groupby("YEAR_MONTH", as_index=False).agg(
+        SOURCE_RECORDS=("SOURCE_RECORDS", "sum"),
+        POSITIVE_QUANTITY=("POSITIVE_QUANTITY", "sum"),
+        NEGATIVE_QUANTITY=("NEGATIVE_QUANTITY", "sum"),
+        NET_QUANTITY=("NET_QUANTITY", "sum"),
+        TOTAL_INDICATIVE_COST=("TOTAL_INDICATIVE_COST", "sum"),
+        INVALID_QUANTITY_RECORDS=("INVALID_QUANTITY_RECORDS", "sum"),
+        MISSING_OR_INVALID_COST_RECORDS=("MISSING_OR_INVALID_COST_RECORDS", "sum"),
+        NEGATIVE_COST_RECORDS=("NEGATIVE_COST_RECORDS", "sum"),
+    )
+    monthly_summary["COST_ANOMALY_FLAG"] = (
+        monthly_summary["TOTAL_INDICATIVE_COST"] >
+        monthly_summary["TOTAL_INDICATIVE_COST"].median() * 2.0
+    )
     included = cohort.loc[cohort["COHORT_INCLUDED"], KEY]
     series = series.merge(included.assign(_included=True), on=KEY, how="inner")
     series["DEMAND"] = series["MODEL_DEMAND"]
@@ -173,12 +187,14 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
     series.to_parquet(series_path, index=False)
     cohort.to_csv(cohort_path, index=False)
+    monthly_summary.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
     report = {
       "source": "NHSBSA Secondary Care Medicines Indicative Price",
       "granularity": "monthly",
       "date_range": {"start": str(series["PERIOD"].min().date()) if len(series) else None,
                      "end": str(series["PERIOD"].max().date()) if len(series) else None},
       "aggregated_rows": int(len(agg)), "global_duplicate_business_keys": duplicate_count,
+      "monthly_cost_anomaly_months": monthly_summary.loc[monthly_summary["COST_ANOMALY_FLAG"], "YEAR_MONTH"].tolist(),
       "series_count_before_filter": int(len(cohort)),
       "series_retained": int(cohort["COHORT_INCLUDED"].sum()),
       "series_excluded": int((~cohort["COHORT_INCLUDED"]).sum()),
