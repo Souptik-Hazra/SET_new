@@ -244,18 +244,27 @@ def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
     assert not result.SIGNIFICANT_LOSS.any()
 
 
-def test_radcsr_horizon_cap_ablation_changes_risk_probability():
-    from src.set_forecasting.risk.radcsr import radcsr_ablations
-    x = sample().tail(5).copy()
-    x["Q10"] = 5.0; x["Q50"] = 10.0; x["Q90"] = 15.0
-    x["AVAILABLE_STOCK"] = 8.0; x["LEAD_TIME_MONTHS"] = 2
-    x["R_E"] = .2; x["R_B"] = .4; x["R_C"] = .6; x["R_D"] = .8; x["R_REL"] = .8
-    out = radcsr_ablations(x)
-    full = out.loc[out.METHOD == "RADCSR", "SHORTAGE_PROBABILITY"].to_numpy()
-    no_cap = out.loc[out.METHOD == "RADCSR_noCap", "SHORTAGE_PROBABILITY"].to_numpy()
-    no_horizon = out.loc[out.METHOD == "RADCSR_noHorizon", "SHORTAGE_PROBABILITY"].to_numpy()
-    assert not np.allclose(full, no_cap)
-    assert not np.allclose(full, no_horizon)
+def test_availability_cap_makes_low_availability_tail_exactly_half():
+    from src.set_forecasting.risk.radcsr import radcsr_probability
+    r = np.linspace(0.0, 1.0, 21)
+    out = radcsr_probability(5.0, 10.0, 15.0, 8.0, 2.0, r)
+    np.testing.assert_allclose(out.MU_L_EFFECTIVE, 8.0)
+    np.testing.assert_allclose(out.RADCSR_DISTRIBUTION_PROBABILITY, 0.5)
+    np.testing.assert_allclose(out.RADCSR_PROBABILITY, 0.5)
+    assert (out.MU_L_EFFECTIVE <= 8.0).all()
+    assert (out.L_EFF >= 2.0).all()
+
+
+def test_high_availability_disables_mean_shift_and_horizon_extension():
+    from src.set_forecasting.risk.radcsr import radcsr_probability
+    r = np.linspace(0.0, 1.0, 21)
+    out = radcsr_probability(5.0, 10.0, 15.0, 30.0, 2.0, r)
+    np.testing.assert_allclose(out.MU_ADJ, out.MU_L)
+    np.testing.assert_allclose(out.MU_L_EFFECTIVE, out.MU_L)
+    np.testing.assert_allclose(out.L_EFF, 2.0)
+    assert out.SIGMA_ADJ.is_monotonic_increasing
+    assert out.RADCSR_DISTRIBUTION_PROBABILITY.is_monotonic_increasing
+    assert out.RADCSR_PROBABILITY.is_monotonic_increasing
 
 
 def test_radcsr_rejects_nonpositive_lead_and_nonfinite_coefficients():
