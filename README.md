@@ -6,7 +6,7 @@ SETReliable studies whether reliability-adaptive demand-conditioned shortage ris
 
 RADCSR is a three-layer pipeline:
 1. Quantile forecasting: global LightGBM P10/P50/P90 forecasts, compared with previous-observation and seasonal-12 naive baselines.
-2. Reliability monitoring: prequential error, bias, coverage and CUSUM drift signals form (R_{rel}).
+2. Reliability monitoring: prequential error, bias, 90% conformal coverage and CUSUM drift signals form (R_{rel}). P10–P90 itself is an 80% interval; its PICP is reported as PICP_80.
 3. Risk adjustment: adjusted spread, conditional mean and effective planning horizon produce a shortage probability from the forecast distribution and simulated availability.
 
 ## Dataset boundary
