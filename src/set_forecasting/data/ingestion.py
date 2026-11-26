@@ -82,6 +82,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
         "NEGATIVE_COST_RECORDS",
     ]
+    if not (0 < float(train_frac) < 1 and 0 < float(val_frac) < 1 and float(train_frac) + float(val_frac) < 1):
+        raise ValueError("train_frac and val_frac must be positive and sum to less than one")
     agg = pd.read_parquet(aggregated_path, columns=required)
     if agg.empty:
         raise ValueError("Aggregated SCMD dataset is empty")
