@@ -37,6 +37,12 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     (out / "tables").mkdir(parents=True, exist_ok=True)
     (out / "resolved_config.json").write_text(json.dumps(resolved_config, indent=2, default=str), encoding="utf-8")
     rel_cfg=cfg.get("reliability",{});risk_cfg=cfg.get("radcsr",{});inv_cfg=cfg.get("inventory",{});data_cfg=cfg.get("data",{})
+    radcsr_ks=float(risk_cfg.get("kappa_sigma",.50))
+    radcsr_km=float(risk_cfg.get("kappa_mu",.75))
+    if radcsr_km < radcsr_ks:
+        raise ValueError("RADCSR configuration violates monotonicity: kappa_mu must be >= kappa_sigma")
+    if radcsr_ks <= 0 or radcsr_km <= 0:
+        raise ValueError("RADCSR strict discrimination requires positive kappa_sigma and kappa_mu")
     (out/"tables").mkdir(parents=True,exist_ok=True);(out/"figures").mkdir(parents=True,exist_ok=True);proc.mkdir(parents=True,exist_ok=True)
     series=pd.read_parquet(series_path)
     required_series = KEYS + ["PERIOD", "MODEL_DEMAND", "OBSERVATION_MISSING", "SPLIT"]
@@ -111,7 +117,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     for _,g in joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         result=radcsr_probability(g.Q10.to_numpy(),g.Q50.to_numpy(),g.Q90.to_numpy(),
             g.AVAILABLE_STOCK.to_numpy(),g.LEAD_TIME_MONTHS.to_numpy(),g.R_REL.to_numpy(),
-            kappa_sigma=float(risk_cfg.get("kappa_sigma",.50)),kappa_mu=float(risk_cfg.get("kappa_mu",.75)),
+            kappa_sigma=radcsr_ks,kappa_mu=radcsr_km,
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0))
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
