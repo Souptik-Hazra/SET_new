@@ -68,7 +68,8 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
     return output_path
 
 def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_path,
-                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
+                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
+                         load_series=True):
     """Build and persist the retained monthly cohort one series at a time.
 
     Only the compact aggregated table is held in memory. Expanded monthly rows
@@ -274,10 +275,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     }
     with open(diagnostics_path, "w", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2, default=str)
-    return pd.read_parquet(series_path), cohort, report
+    return (pd.read_parquet(series_path) if load_series else None), cohort, report
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
-                        min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
+                        min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
+                        load_series=True):
     root = get_project_root()
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
@@ -290,7 +292,8 @@ def run_phase1_from_csv(source=None, output_root="output", processed_root="data/
     aggregate_scmd(source, aggregated)
     return build_monthly_series(aggregated, series_path, cohort_path, diagnostics_path,
                                 min_periods=min_periods, min_nonzero=min_nonzero,
-                                train_frac=train_frac, val_frac=val_frac)
+                                train_frac=train_frac, val_frac=val_frac,
+                                load_series=load_series)
 
 def run_phase1(raw_df=None, **kwargs):
     """Compatibility wrapper: Phase 1 now reads the configured SCMD CSV on disk."""
@@ -301,7 +304,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default=None)
     args = parser.parse_args()
-    _, cohort, report = run_phase1_from_csv(args.source)
+    _, cohort, report = run_phase1_from_csv(args.source, load_series=False)
     print(json.dumps(report, indent=2, default=str))
     print("Cohort rows:", len(cohort))
     print(DISCLAIMER)
