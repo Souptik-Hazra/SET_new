@@ -23,11 +23,10 @@ def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
         raise ValueError("Scenario input must have one row per series and period")
     if predictions[required].isna().any().any():
         raise ValueError("Scenario inputs must not contain null keys, periods, demand or quantiles")
-    lead_times = tuple(sorted({int(value) for value in lead_times}))
-    if not lead_times or any(value < 1 for value in lead_times):
-        raise ValueError("lead_times must contain positive integer month values")
-    if any(float(value) != int(value) for value in lead_times):
-        raise ValueError("lead_times must contain whole month values")
+    raw_lead_times = tuple(lead_times)
+    if not raw_lead_times or any(not np.isfinite(float(value)) or float(value) < 1 or not float(value).is_integer() for value in raw_lead_times):
+        raise ValueError("lead_times must contain positive whole-month values")
+    lead_times = tuple(sorted({int(value) for value in raw_lead_times}))
     frames = []
     for key, group in predictions.groupby(KEYS, sort=False, dropna=False):
         group = group.sort_values("PERIOD").copy()
@@ -103,14 +102,26 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
     rows=[];z=float(norm.ppf(service_level))
     for keys,g in scenarios.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         g=g.sort_values("PERIOD");demand_values=np.maximum(g.SCENARIO_DEMAND.to_numpy(float),0)
-        leads=np.maximum(g.LEAD_TIME_MONTHS.to_numpy(int),1)
+        raw_leads=pd.to_numeric(g.LEAD_TIME_MONTHS,errors="coerce").to_numpy(float)
+        if np.any(~np.isfinite(raw_leads)) or np.any(raw_leads < 1) or np.any(raw_leads != np.floor(raw_leads)):
+            raise ValueError("LEAD_TIME_MONTHS must contain finite positive whole-month values")
+        demand_raw=pd.to_numeric(g.SCENARIO_DEMAND,errors="coerce").to_numpy(float)
+        if np.any(~np.isfinite(demand_raw)) or np.any(demand_raw < 0):
+            raise ValueError("SCENARIO_DEMAND must contain finite non-negative values")
+        quantiles=g[["Q10","Q90"]].to_numpy(float)
+        if np.any(~np.isfinite(quantiles)) or np.any(quantiles < 0) or np.any(quantiles[:,0] > quantiles[:,1]):
+            raise ValueError("Inventory quantiles must be finite and satisfy 0 <= Q10 <= Q90")
+        leads=raw_leads.astype(int)
+        demand_values=demand_raw
         stock=max(0,float(g.Q90.iloc[0])*initial_cover);pipeline=[]
         for t,row in enumerate(g.itertuples()):
             receipts=sum(q for due,q in pipeline if due<=t)
             pipeline=[(due,q) for due,q in pipeline if due>t]
             on_hand=stock+receipts
             lead=int(leads[t])
-            pipeline_available=sum(q for due,q in pipeline if due<=t+lead)
+            # The lead-time window is t ... t+lead-1. A receipt due at t+lead
+            # arrives after this demand horizon and cannot reduce its shortage.
+            pipeline_available=sum(q for due,q in pipeline if due<=t+lead-1)
             available=on_hand+pipeline_available
             lead_end=min(len(g),t+lead)
             horizon_complete = (t + lead) <= len(g)
@@ -138,9 +149,10 @@ def inventory_sensitivity(scenarios, service_levels=(0.90, 0.95, 0.99),
                             initial_covers=(1.0, 2.0), target_covers=(2.0, 3.0),
                             lead_times=(1, 2, 3)):
     """Evaluate a predeclared inventory-assumption grid on identical scenarios."""
-    lead_times = tuple(sorted({int(value) for value in lead_times}))
-    if not lead_times or any(value < 1 for value in lead_times):
-        raise ValueError("lead_times must contain positive integer month values")
+    raw_lead_times = tuple(lead_times)
+    if not raw_lead_times or any(not np.isfinite(float(value)) or float(value) < 1 or not float(value).is_integer() for value in raw_lead_times):
+        raise ValueError("lead_times must contain positive whole-month values")
+    lead_times = tuple(sorted({int(value) for value in raw_lead_times}))
     rows = []
     for lead_time in lead_times:
       scenario_copy = scenarios.copy()
