@@ -164,3 +164,37 @@ def monotonicity_audit(q10, q50, q90, availability, lead_time,
             "minimum_step": float(steps.min()), "probability_curve": curve.tolist(),
             "gate_status": "PASS" if passed else "FAIL",
             "method": "analytic_monotone_risk_uplift_no_posthoc_envelope"}
+
+
+def block_bootstrap_lead_time_samples(q50_path, residual_history, lead, n_boot=500,
+                                      block_length=None, seed=42):
+    """Simulate lead-time demand from historical forecast-error blocks.
+
+    q50_path contains one-step forecasts for the future lead horizon.
+    residual_history must contain errors observed strictly before the forecast origin.
+    Circular moving blocks preserve short-range monthly dependence; no future
+    validation/test residual is admitted into the bootstrap pool.
+    """
+    forecasts = np.maximum(0.0, np.asarray(q50_path, dtype=float).reshape(-1))
+    errors = np.asarray(residual_history, dtype=float).reshape(-1)
+    if int(lead) < 1 or len(forecasts) < int(lead):
+        raise ValueError("q50_path must contain at least lead finite forecasts")
+    if len(errors) < 2 or np.any(~np.isfinite(errors)) or np.any(~np.isfinite(forecasts)):
+        raise ValueError("At least two finite historical residuals and finite forecasts are required")
+    lead = int(lead)
+    errors = errors - float(np.mean(errors))
+    if block_length is None:
+        block_length = max(1, int(round(len(errors) ** (1.0 / 3.0))))
+    block_length = min(max(1, int(block_length)), len(errors))
+    rng = np.random.default_rng(seed)
+    n_boot = int(n_boot)
+    if n_boot < 20:
+        raise ValueError("n_boot must be at least 20")
+    samples = np.empty(n_boot, dtype=float)
+    for b in range(n_boot):
+        path = []
+        while len(path) < lead:
+            start = int(rng.integers(0, len(errors)))
+            path.extend(errors[(start + np.arange(block_length)) % len(errors)].tolist())
+        samples[b] = np.maximum(0.0, forecasts[:lead] + np.asarray(path[:lead])).sum()
+    return samples
