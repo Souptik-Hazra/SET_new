@@ -114,7 +114,7 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
     return pd.DataFrame({
         "MU_L": mu.reshape(-1), "SIGMA_L": sigma.reshape(-1),
         "SIGMA_ADJ": sigma_adj.reshape(-1), "MU_ADJ": mu_adj.reshape(-1),
-        "L_EFF": lead_eff.reshape(-1),
+        "MU_L_EFFECTIVE": mu_eff.reshape(-1), "L_EFF": lead_eff.reshape(-1),
         "RADCSR_DISTRIBUTION_PROBABILITY": raw.reshape(-1),
         "RADCSR_BASE_PROBABILITY": baseline.reshape(-1),
         "RADCSR_RAW_PROBABILITY": probability.reshape(-1),
