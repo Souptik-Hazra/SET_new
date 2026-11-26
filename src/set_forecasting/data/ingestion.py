@@ -100,10 +100,13 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS", "INVALID_QUANTITY_RECORDS",
         "MISSING_OR_INVALID_COST_RECORDS", "NEGATIVE_COST_RECORDS",
     ]
-    for col in numeric:
-        agg[col] = pd.to_numeric(agg[col], errors="coerce")
-    if agg[numeric].isna().any().any():
-        raise ValueError("Aggregated SCMD table contains null or non-numeric measures")
+    agg["SOURCE_RECORDS"] = pd.to_numeric(agg["SOURCE_RECORDS"], errors="coerce")
+    if agg["SOURCE_RECORDS"].isna().any():
+        raise ValueError("Aggregated SCMD table contains null SOURCE_RECORDS")
+    for col in numeric[1:]:
+        # DuckDB SUM returns NULL when every source value in a group is invalid.
+        # Preserve the previous explicit zero-fill policy for those aggregate measures.
+        agg[col] = pd.to_numeric(agg[col], errors="coerce").fillna(0.0)
 
     business_key = ["YEAR_MONTH"] + KEY
     duplicate_count = int(agg.duplicated(business_key).sum())
