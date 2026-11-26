@@ -119,12 +119,35 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),
             "ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}
     test_joined=joined[joined.SPLIT=="test"]
-    sample=test_joined.iloc[0]
-    mono=monotonicity_audit(float(sample.Q10),float(sample.Q50),float(sample.Q90),
-        float(sample.AVAILABLE_STOCK),float(sample.LEAD_TIME_MONTHS))
+    if test_joined.empty:
+        raise RuntimeError("No held-out test rows available for RADCSR monotonicity acceptance gate.")
+    mono_cfg = dict(kappa_sigma=float(risk_cfg.get("kappa_sigma", .75)),
+                    kappa_mu=float(risk_cfg.get("kappa_mu", .50)),
+                    kappa_l=float(risk_cfg.get("kappa_l", 1.5)),
+                    horizon_cap=risk_cfg.get("horizon_cap", 2.0))
+    audit_rows=[]
+    audit_sample=test_joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False).head(1)
+    for row in audit_sample.itertuples():
+        audit_rows.append(monotonicity_audit(float(row.Q10),float(row.Q50),float(row.Q90),
+            float(row.AVAILABLE_STOCK),float(row.LEAD_TIME_MONTHS),**mono_cfg))
+    mono_pass=all(item["raw_pass"] for item in audit_rows)
+    mono={"gate_status":"PASS" if mono_pass else "FAIL",
+          "cases_checked":len(audit_rows),"all_raw_curves_monotone":mono_pass,
+          "method":"analytic_monotone_risk_uplift_no_posthoc_envelope",
+          "cases":[{k:v for k,v in item.items() if k!="probability_curve"} for item in audit_rows]}
     (out/"radcsr_monotonicity_audit.json").write_text(json.dumps(mono,indent=2))
+    if not mono_pass:
+        raise RuntimeError("RADCSR monotonicity acceptance gate failed; refusing to publish research outputs.")
     test_scenarios=scenarios[scenarios.SPLIT=="test"]
     mean_rel=test_scenarios.groupby("SCENARIO_ID").R_REL.mean().to_dict()
+    mean_risk=rad_df[rad_df.SPLIT=="test"].groupby("SCENARIO_ID").RADCSR_PROBABILITY.mean().to_dict()
+    stable_rel=mean_rel.get("S1_Stable")
+    stress_checks={}
+    for scenario,value in mean_rel.items():
+        if scenario=="S1_Stable" or stable_rel is None:
+            continue
+        stress_checks[scenario]={"reliability_lift_vs_stable":float(value-stable_rel),
+            "higher_reliability_penalty":bool(value>=stable_rel)}
     report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
       "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),"scenario_rows":len(scenarios),"ablation_rows":len(ablation_df),
@@ -133,7 +156,16 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "calibrator_status_counts":calibrated.CALIBRATOR_STATUS.value_counts().to_dict(),
       "signal_correlations_above_0_70":high_corr,"mean_reliability_by_test_scenario":mean_rel,
       "stress_reliability_lift_vs_stable":{k:float(v-mean_rel.get("S1_Stable",0)) for k,v in mean_rel.items()},
-      "monotonicity_audit":{k:v for k,v in mono.items() if k!="probability_curve"},
+      "monotonicity_audit":{k:v for k,v in mono.items() if k!="cases"},
+      "scenario_reliability_acceptance":stress_checks,
+      "mean_radcsr_probability_by_test_scenario":mean_risk,
+      "ablation_status":{"implemented_methods":sorted(ablation_df.METHOD.unique().tolist()),
+          "clinical_ablation":"NOT_RUN: requires verified VEN mapping; no clinical category is inferred"},
+      "statistical_inference":{"unit":"organisation/VMP/unit series cluster",
+          "confidence_interval":"paired cluster bootstrap percentile 95%",
+          "hypothesis_test":"paired series sign-flip randomisation",
+          "multiple_testing":"global Holm step-down across scenario-method comparisons",
+          "resamples":int(n_boot)},
       "bootstrap_resamples":n_boot,"disclaimer":DISCLAIMER,
       "clinical_priority":clinical_status,
       "interpretation":"Risk probabilities are isotonic-calibrated on validation-period simulated labels and evaluated on test-period simulated labels. Brier scores are not evidence of observed hospital stockout prediction.",
