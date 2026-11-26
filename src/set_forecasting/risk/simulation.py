@@ -102,6 +102,7 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             pipeline_available=sum(q for due,q in pipeline if due<=t+lead)
             available=on_hand+pipeline_available
             lead_end=min(len(g),t+lead)
+            horizon_complete = (t + lead) <= len(g)
             realised_lead_demand=float(demand_values[t:lead_end].sum())
             current_demand=float(demand_values[t])
             shortage=max(0,current_demand-on_hand)
@@ -112,12 +113,12 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             if order>0:pipeline.append((t+lead,order))
             rec=dict(zip(KEYS+["SCENARIO_ID"],keys))
             rec.update(PERIOD=row.PERIOD,DEMAND=current_demand,
-                LEAD_TIME_DEMAND=realised_lead_demand,AVAILABLE_STOCK=available,
+                LEAD_TIME_DEMAND=realised_lead_demand,LEAD_TIME_HORIZON_COMPLETE=int(horizon_complete),AVAILABLE_STOCK=available,
                 ON_HAND_AVAILABLE=on_hand,ENDING_STOCK=stock,RECEIPTS=receipts,
                 PIPELINE_WITHIN_LEAD_TIME=pipeline_available,ORDER_PLACED=order,
                 LEAD_TIME_MONTHS=lead,SHORTAGE_QUANTITY=shortage,
                 MONTHLY_STOCKOUT_LABEL=int(shortage>0),
-                STOCKOUT_LABEL=int(realised_lead_demand>available),
+                STOCKOUT_LABEL=int(realised_lead_demand>available) if horizon_complete else np.nan,
                 STOCKOUTS_ARE_OBSERVED=0,OUTCOME_TYPE="SIMULATED")
             rows.append(rec)
     return pd.DataFrame(rows)
@@ -162,6 +163,7 @@ def risk_baseline_probabilities(frame, seed=42):
 def brier_by_method(probabilities,inventory):
     keys=KEYS+["PERIOD","SCENARIO_ID"]
     x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner",validate="many_to_one")
+    x=x.dropna(subset=["STOCKOUT_LABEL"])
     x["BRIER"]=(x.SHORTAGE_PROBABILITY-x.STOCKOUT_LABEL)**2
     return x.groupby(["SCENARIO_ID","METHOD"],as_index=False).agg(BRIER_SCORE=("BRIER","mean"),N=("BRIER","size"))
 
@@ -174,6 +176,7 @@ def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
     keys = KEYS + ["PERIOD", "SCENARIO_ID"]
     x = probabilities.merge(inventory[keys + ["STOCKOUT_LABEL"]],
                             on=keys, how="inner", validate="many_to_one")
+    x=x.dropna(subset=["STOCKOUT_LABEL"])
     x["SERIES_ID"] = x[KEYS].astype(str).agg("|".join, axis=1)
     x["LOSS"] = (x.SHORTAGE_PROBABILITY - x.STOCKOUT_LABEL) ** 2
     if int(n_boot) < 100:
@@ -238,6 +241,7 @@ def calibrate_risk_probabilities(probabilities,inventory,min_validation_rows=30)
     from sklearn.isotonic import IsotonicRegression
     keys=KEYS+["PERIOD","SCENARIO_ID"]
     x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner",validate="many_to_one")
+    x=x.dropna(subset=["STOCKOUT_LABEL"])
     x["RAW_SHORTAGE_PROBABILITY"]=x.SHORTAGE_PROBABILITY
     calibrated=[]
     for (scenario,method),g in x.groupby(["SCENARIO_ID","METHOD"],sort=False):
