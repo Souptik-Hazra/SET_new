@@ -98,10 +98,14 @@ def test_end_to_end_small_cohort(tmp_path):
     source=tmp_path/"series.parquet"
     series.to_parquet(source,index=False)
     report=run_model_pipeline(series_path=str(source),output_dir=str(tmp_path/"output"),
-        processed_dir=str(tmp_path/"processed"),n_boot=100)
+        processed_dir=str(tmp_path/"processed"),seed=123,n_boot=100)
     assert report["prediction_rows"]>0
     assert report["inventory_rows"]>0
     assert report["ablation_rows"]>0
+    import json
+    resolved=json.loads((tmp_path/"output/resolved_config.json").read_text())
+    assert resolved["seed"] == 123
+    assert report["reliability_score_semantics"]["direction"] == "higher_values_mean_worse_forecast_reliability"
     ablations = pd.read_parquet(tmp_path/"processed/radcsr_ablations.parquet")
     assert ablations[KEYS + ["PERIOD", "SCENARIO_ID", "SPLIT"]].notna().all().all()
     assert ablations.METHOD.nunique() >= 7
@@ -340,3 +344,111 @@ def test_inventory_sensitivity_grid_runs_on_shared_scenario_streams():
     assert len(result) == 2
     assert set(result.INITIAL_COVER_MONTHS) == {1.0, 2.0}
     assert result.SIMULATED_STOCKOUT_RATE.between(0, 1).all()
+
+
+def test_ingestion_persists_filtered_series_with_chronological_splits(tmp_path):
+    from src.set_forecasting.data.ingestion import build_monthly_series
+
+    rows = []
+    for org in ("ORG01", "ORG02"):
+        for i, period in enumerate(pd.date_range("2023-01-01", periods=24, freq="MS")):
+            rows.append({
+                "YEAR_MONTH": period.strftime("%Y%m"),
+                "ODS_CODE": org,
+                "VMP_SNOMED_CODE": "000123",
+                "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+                "VMP_PRODUCT_NAME": "Test medicine",
+                "UNIT_OF_MEASURE_NAME": "tablet",
+                "SOURCE_RECORDS": 1,
+                "POSITIVE_QUANTITY": float(10 + i),
+                "NEGATIVE_QUANTITY": 0.0,
+                "NET_QUANTITY": float(10 + i),
+                "TOTAL_INDICATIVE_COST": float((10 + i) * 2),
+                "VALID_QUANTITY_RECORDS": 1,
+                "INVALID_QUANTITY_RECORDS": 0,
+                "MISSING_OR_INVALID_COST_RECORDS": 0,
+                "NEGATIVE_COST_RECORDS": 0,
+            })
+    aggregated = tmp_path / "aggregated.parquet"
+    series_path = tmp_path / "monthly.parquet"
+    pd.DataFrame(rows).to_parquet(aggregated, index=False)
+
+    returned, cohort, report = build_monthly_series(
+        aggregated, series_path, tmp_path / "cohort.csv",
+        tmp_path / "diagnostics.json", min_periods=18, min_nonzero=6,
+        load_series=False,
+    )
+
+    assert returned is None
+    assert cohort.COHORT_INCLUDED.all()
+    saved = pd.read_parquet(series_path)
+    assert {"SPLIT", "TRAIN_END", "VALIDATION_END", "TEST_START"}.issubset(saved.columns)
+    assert set(saved.SPLIT) == {"train", "validation", "test"}
+    assert saved.groupby(KEYS).size().eq(24).all()
+    assert report["series_retained"] == 2
+    assert "bounded batches" in report["memory_strategy"]
+
+
+def test_inventory_excludes_receipt_due_after_current_lead_time_window():
+    x = sample(3).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = 0.0
+    x["Q10"] = 2.0
+    x["Q90"] = 2.0
+    x["LEAD_TIME_MONTHS"] = [2, 1, 1]
+
+    inventory = simulate_inventory(x, service_level=.95, initial_cover=0.0, target_cover=1.0)
+
+    # The first order is due at t=2. At t=1, a one-month horizon covers
+    # only t=1; the receipt due at t=2 must not be included yet.
+    assert inventory.loc[0, "ORDER_PLACED"] > 0
+    assert inventory.loc[1, "PIPELINE_WITHIN_LEAD_TIME"] == 0
+    assert inventory.loc[1, "AVAILABLE_STOCK"] == inventory.loc[1, "ON_HAND_AVAILABLE"]
+
+
+def test_configured_lead_times_and_scenario_perturbations_are_recorded():
+    import json
+    x = sample(12).copy()
+    x["Q10"] = x.MODEL_DEMAND * .8
+    x["Q50"] = x.MODEL_DEMAND
+    x["Q90"] = x.MODEL_DEMAND * 1.2
+
+    scenarios = make_scenarios(x, seed=17, lead_times=(3,))
+    stable = scenarios[scenarios.SCENARIO_ID == "S1_Stable"]
+    shock = scenarios[scenarios.SCENARIO_ID == "S6_LeadTimeShock"]
+    combined = scenarios[scenarios.SCENARIO_ID == "S7_Combined"]
+
+    assert set(stable.LEAD_TIME_MONTHS) == {3}
+    assert set(shock.LEAD_TIME_MONTHS) == {5}
+    metadata = json.loads(combined.PERTURBATIONS.iloc[0])
+    assert {item["name"] for item in metadata} == {
+        "surge", "gradual_drift", "lognormal_volatility", "lead_time_shock"
+    }
+    assert combined.SHIFT_MAGNITUDE.iloc[0] == .5
+
+
+def test_inventory_sensitivity_includes_lead_time_assumption_grid():
+    from src.set_forecasting.risk.simulation import inventory_sensitivity
+    x = sample(5).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = x.MODEL_DEMAND
+    x["Q10"] = 5.0
+    x["Q50"] = 10.0
+    x["Q90"] = 15.0
+    x["LEAD_TIME_MONTHS"] = 2
+    result = inventory_sensitivity(
+        x, service_levels=(.95,), initial_covers=(1.,),
+        target_covers=(2.,), lead_times=(1, 3)
+    )
+    assert set(result.BASE_LEAD_TIME_MONTHS) == {1, 3}
+    assert len(result) == 2
+
+
+def test_unreliability_score_has_explicit_direction_and_legacy_alias():
+    x = sample().tail(10).copy()
+    x["Q10"] = x.MODEL_DEMAND - 2
+    x["Q50"] = x.MODEL_DEMAND - 1
+    x["Q90"] = x.MODEL_DEMAND + 2
+    result = build_reliability_index(x)
+    assert "R_UNRELIABILITY" in result
+    np.testing.assert_allclose(result.R_UNRELIABILITY, result.R_REL)
