@@ -13,7 +13,15 @@ def _stable_seed(seed, key):
 
 
 def make_scenarios(predictions, seed=42):
-    """Create reproducible, series-isolated stress streams with explicit shift metadata."""
+    """Create reproducible, series-isolated synthetic stress streams."""
+    required = KEYS + ["PERIOD", "MODEL_DEMAND", "Q10", "Q50", "Q90"]
+    missing = set(required) - set(predictions.columns)
+    if missing:
+        raise ValueError(f"Missing scenario inputs: {sorted(missing)}")
+    if predictions.duplicated(KEYS + ["PERIOD"]).any():
+        raise ValueError("Scenario input must have one row per series and period")
+    if predictions[required].isna().any().any():
+        raise ValueError("Scenario inputs must not contain null keys, periods, demand or quantiles")
     frames = []
     for key, group in predictions.groupby(KEYS, sort=False, dropna=False):
         group = group.sort_values("PERIOD").copy()
@@ -71,6 +79,16 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
     simulated lead-time horizon. STOCKOUT_LABEL compares realised future lead-time
     demand with that availability; it is a retrospective synthetic label.
     """
+    required = KEYS + ["SCENARIO_ID", "PERIOD", "SCENARIO_DEMAND", "Q10", "Q90", "LEAD_TIME_MONTHS"]
+    missing = set(required) - set(scenarios.columns)
+    if missing:
+        raise ValueError(f"Missing inventory inputs: {sorted(missing)}")
+    if not 0 < float(service_level) < 1:
+        raise ValueError("service_level must be strictly between 0 and 1")
+    if not np.isfinite([initial_cover, target_cover]).all() or initial_cover < 0 or target_cover < 0:
+        raise ValueError("Inventory cover values must be finite and non-negative")
+    if scenarios.duplicated(KEYS + ["SCENARIO_ID", "PERIOD"]).any():
+        raise ValueError("Inventory input must have one row per series, scenario and period")
     rows=[];z=float(norm.ppf(service_level))
     for keys,g in scenarios.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         g=g.sort_values("PERIOD");demand_values=np.maximum(g.SCENARIO_DEMAND.to_numpy(float),0)
@@ -184,7 +202,9 @@ def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
                 "CI_UPPER": float(np.quantile(boot, .975)),
                 "P_VALUE": p_value,
                 "BOOTSTRAP_RESAMPLES": int(n_boot),
-                "TEST": "paired_series_sign_flip"
+                "TEST": "paired_series_sign_flip",
+                "INFERENCE_STATUS": "LOW_CLUSTER_COUNT_DESCRIPTIVE_ONLY" if n < 10 else "INFERENTIAL",
+                "MINIMUM_SERIES_FOR_INFERENCE": 10
             })
     if not results:
         return pd.DataFrame()
@@ -195,11 +215,12 @@ def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
     for rank, idx in enumerate(order):
         running = max(running, min(1.0, (m - rank) * results[idx]["P_VALUE"]))
         results[idx]["HOLM_ADJUSTED_P"] = running
+        enough_clusters = results[idx]["N_SERIES"] >= 10
         results[idx]["SIGNIFICANT_WIN"] = bool(
-            running < .05 and results[idx]["CI_UPPER"] < 0 and
+            enough_clusters and running < .05 and results[idx]["CI_UPPER"] < 0 and
             results[idx]["MEAN_BRIER_DIFFERENCE"] < 0)
         results[idx]["SIGNIFICANT_LOSS"] = bool(
-            running < .05 and results[idx]["CI_LOWER"] > 0 and
+            enough_clusters and running < .05 and results[idx]["CI_LOWER"] > 0 and
             results[idx]["MEAN_BRIER_DIFFERENCE"] > 0)
     return pd.DataFrame(results)
 
