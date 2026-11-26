@@ -116,7 +116,7 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
         "RADCSR_RAW_PROBABILITY": probability.reshape(-1),
         "RADCSR_PROBABILITY": probability.reshape(-1),
         "R_REL": reliability.reshape(-1),
-        "STOCKOUTS_ARE_OBSERVED": 0, "OUTCOME_TYPE": "SIMULATED"
+        "STOCKOUTS_ARE_OBSERVED": 0, "OUTCOME_TYPE": "SIMULATED", "DISCLAIMER": DISCLAIMER
     })
 
 
