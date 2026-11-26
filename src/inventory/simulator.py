@@ -42,24 +42,11 @@ INVENTORY_CONFIGS = {
 }
 
 def assign_ven_classes(df: pd.DataFrame, med_col: str = "MEDICINE_ID", demand_col: str = "DEMAND_CLEAN", seed: int = 42) -> pd.DataFrame:
-    np.random.seed(seed)
-    totals = df.groupby(med_col)[demand_col].sum().reset_index()
-    q33 = totals[demand_col].quantile(0.33)
-    q66 = totals[demand_col].quantile(0.66)
-
-    med_ven = []
-    for _, row in totals.iterrows():
-        med = row[med_col]
-        tot = row[demand_col]
-        subst = int(np.random.rand() > 0.40)
-        if tot >= q66 and subst == 0:
-            ven = "V"
-        elif tot >= q33 or subst == 0:
-            ven = "E"
-        else:
-            ven = "N"
-        med_ven.append({med_col: med, "VEN_CLASS": ven, "SUBSTITUTABLE": subst})
-    return pd.DataFrame(med_ven)
+    """Clinical VEN classes cannot be inferred from demand or randomly assigned."""
+    raise ValueError(
+        "Synthetic VEN/substitutability assignment is disabled. Supply a verified "
+        "clinical classification source with medicine-level provenance instead."
+    )
 
 
 def simulate_inventory(scenario_df: pd.DataFrame,

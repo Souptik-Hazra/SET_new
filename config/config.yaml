@@ -1,5 +1,4 @@
 seed: 42
-
 data:
   source: data/combined_secondary_care_medicines.csv
   engine: duckdb
@@ -15,25 +14,18 @@ data:
   min_periods: 18
   min_nonzero: 6
   outlier_iqr_multiplier: 3.0
-  winsorize_quantile: 0.99
   train_frac: 0.60
   val_frac: 0.20
   test_frac: 0.20
-
 forecast:
   horizon: 1
   seasonal_period: 12
   quantiles: [0.10, 0.50, 0.90]
-
+  model: global_quantile_lightgbm
 reliability:
   window: 8
-  cusum_k: 0.5
-  cusum_h: 5.0
-  adwin_delta: 0.002
-  ewma_lambda: 0.9
-  aci_gamma: 0.01
   target_coverage: 0.90
-
+  min_history: 3
 inventory:
   granularity: monthly
   init_stock_months: 1
@@ -42,7 +34,6 @@ inventory:
   lead_time_months: [1, 2, 3]
   service_level: 0.95
   outcomes_are_simulated: true
-
 radcsr:
   weights: {error: 0.30, bias: 0.30, coverage: 0.25, drift: 0.15}
   kappa: 0.5
@@ -50,7 +41,6 @@ radcsr:
   gamma_max: 2.0
   tau_risk: 0.30
   tau_reliability: 0.50
-
 scenarios:
   surge_multiplier: [1.5, 2.0]
   surge_duration_months: [2, 4]

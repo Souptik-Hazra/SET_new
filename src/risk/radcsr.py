@@ -101,9 +101,9 @@ def evaluate_all_risk_methods(df: pd.DataFrame,
         q90_m = q90_all[start:end]
         res_m = y_m - q50_m
 
-        base_n = max(2, min(4, n // 3))
-        base_err = max(0.2, float(np.mean(np.abs(y_m[:base_n] - q50_m[:base_n]))))
-        base_mean = max(0.5, float(np.mean(y_m[:base_n])))
+        # Initialise from forecast scale only; never inspect future test outcomes.
+        base_err = max(0.2, float(np.mean(np.maximum(0.0, q90_m[:min(3, n)] - q10_m[:min(3, n)])) / 2.0))
+        base_mean = max(0.5, float(np.mean(np.maximum(0.0, q50_m[:min(3, n)]))))
         wape_base = max(1e-2, base_err / base_mean)
 
         ewma_v = float((sigma_L[start] ** 2) / max(1, L[start]))
@@ -121,10 +121,6 @@ def evaluate_all_risk_methods(df: pd.DataFrame,
             l_t = L[idx]
             e_t = res_m[t]
             p_nom = p_static[idx]
-
-            res_buffer.append(float(e_t))
-            if len(res_buffer) > 52:
-                res_buffer.pop(0)
 
             # (A) Phase 3: Rolling_Q (asymmetric empirical quantiles from last 8 residuals)
             buf_8 = res_buffer[-8:]
@@ -148,7 +144,6 @@ def evaluate_all_risk_methods(df: pd.DataFrame,
             p_roll_q[idx] = float(np.clip(1.0 - F_rq, 0.0, 1.0))
 
             # (B) Phase 3: EWMA (lambda=0.9, upper tail only)
-            ewma_v = 0.9 * ewma_v + 0.1 * (e_t ** 2)
             s_ewma_up = np.sqrt(l_t) * max(0.1, 1.645 * np.sqrt(ewma_v))
             s_ewma_low = sigma_L[idx]
             if avail_t <= mu_t:
@@ -234,10 +229,10 @@ def evaluate_all_risk_methods(df: pd.DataFrame,
             p_dro[idx] = float(np.clip(p_nom + (eps / max(0.1, 2.0 * sigma_L[idx])), 0.0, 1.0))
 
             # RADCSR Signal Extraction
-            h_y = y_m[max(0, t - w) : t] if t > 0 else y_m[:1]
-            h_50 = q50_m[max(0, t - w) : t] if t > 0 else q50_m[:1]
-            h_10 = q10_m[max(0, t - w) : t] if t > 0 else q10_m[:1]
-            h_90 = q90_m[max(0, t - w) : t] if t > 0 else q90_m[:1]
+            h_y = y_m[max(0, t - w) : t] if t > 0 else np.asarray([q50_m[t]])
+            h_50 = q50_m[max(0, t - w) : t] if t > 0 else np.asarray([q50_m[t]])
+            h_10 = q10_m[max(0, t - w) : t] if t > 0 else np.asarray([q10_m[t]])
+            h_90 = q90_m[max(0, t - w) : t] if t > 0 else np.asarray([q90_m[t]])
 
             w_wape = np.sum(np.abs(h_y - h_50)) / max(1e-2, np.sum(h_y))
             r_E_all[idx] = float(np.clip(w_wape / wape_base, 0.0, 3.0))
@@ -256,6 +251,12 @@ def evaluate_all_risk_methods(df: pd.DataFrame,
                 w1 = y_m[t - w : t]
                 p_std = max(0.2, float(np.std(np.concatenate([w0, w1]))))
                 r_D_all[idx] = float(np.clip(abs(np.mean(w1) - np.mean(w0)) / p_std, 0.0, 3.0))
+
+            # Update residual state only after current-period risk estimates are fixed.
+            ewma_v = 0.9 * ewma_v + 0.1 * (e_t ** 2)
+            res_buffer.append(float(e_t))
+            if len(res_buffer) > 52:
+                res_buffer.pop(0)
 
     # Helper function for Phase 1 (two-piece split normal) & Phase 2 (horizon expansion)
     def compute_radcsr_tail(r_rel_vec, use_horizon=True, use_bias_shift=True):
