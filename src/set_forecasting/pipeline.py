@@ -33,11 +33,11 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     # Recompute reliability under each stress scenario; this is essential for S5_Bias.
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
-        scenario_rel.append(build_reliability_index(g))
+        scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND)))
     scenarios=pd.concat(scenario_rel,ignore_index=True)
     inventory=simulate_inventory(scenarios)
     keys=KEYS+["PERIOD","SCENARIO_ID"]
-    joined=scenarios.merge(inventory[keys+["AVAILABLE_STOCK","STOCKOUT_LABEL"]],on=keys,how="inner",validate="one_to_one")
+    joined=scenarios.merge(inventory[keys+["AVAILABLE_STOCK","STOCKOUT_LABEL","DEMAND"]],on=keys,how="inner",validate="one_to_one")
     rad=[]
     for _,g in joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         r=radcsr_probability(g.Q10.to_numpy(),g.Q50.to_numpy(),g.Q90.to_numpy(),
