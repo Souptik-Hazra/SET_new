@@ -53,5 +53,5 @@ def monotonicity_audit(q10,q50,q90,availability,lead_time,ks=.75,km=.50,kl=.50):
     adjusted=np.maximum.accumulate(raw)
     return {"raw_pass":bool(np.all(np.diff(raw)>=-1e-10)),
       "envelope_pass":bool(np.all(np.diff(adjusted)>=-1e-10)),
-      "raw_minimum_step":float(np.min(np.diff(raw)),
+      "raw_minimum_step":float(np.min(np.diff(raw))),
       "probability_curve":adjusted.tolist()}
