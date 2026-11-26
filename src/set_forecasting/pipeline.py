@@ -19,7 +19,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
     if len(features):
         per_series=[]
-        test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred\n        for key,g in test_pred.groupby(KEYS,sort=False,dropna=False):
+        test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
+        for key,g in test_pred.groupby(KEYS,sort=False,dropna=False):
             y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)
             per_series.append(dict(zip(KEYS,key),N_TEST=len(g),WAPE=float(np.abs(y-q).sum()/max(np.abs(y).sum(),1e-9)*100),MAE=float(np.mean(np.abs(y-q)))))
         per_series=pd.DataFrame(per_series)
