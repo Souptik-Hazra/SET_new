@@ -36,6 +36,33 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     rel_cfg=cfg.get("reliability",{});risk_cfg=cfg.get("radcsr",{});inv_cfg=cfg.get("inventory",{});data_cfg=cfg.get("data",{})
     (out/"tables").mkdir(parents=True,exist_ok=True);(out/"figures").mkdir(parents=True,exist_ok=True);proc.mkdir(parents=True,exist_ok=True)
     series=pd.read_parquet(series_path)
+    required_series = KEYS + ["PERIOD", "MODEL_DEMAND", "OBSERVATION_MISSING", "SPLIT"]
+    missing_series = sorted(set(required_series) - set(series.columns))
+    if missing_series:
+        raise ValueError(f"Monthly series file is missing required columns: {missing_series}")
+    if series[KEYS + ["PERIOD", "SPLIT"]].isna().any().any():
+        raise ValueError("Monthly series contains null business keys, periods or split labels")
+    if series.duplicated(KEYS + ["PERIOD"]).any():
+        raise ValueError("Monthly series must be unique by organisation/VMP/unit/month")
+    series["PERIOD"] = pd.to_datetime(series["PERIOD"], errors="coerce")
+    if series.PERIOD.isna().any():
+        raise ValueError("Monthly series contains invalid PERIOD values")
+    series["MODEL_DEMAND"] = pd.to_numeric(series["MODEL_DEMAND"], errors="coerce")
+    observed = ~series["OBSERVATION_MISSING"].fillna(True).astype(bool)
+    if series.loc[observed, "MODEL_DEMAND"].isna().any() or not np.isfinite(series.loc[observed, "MODEL_DEMAND"]).all():
+        raise ValueError("Observed monthly demand must be finite and non-null")
+    if (series.loc[observed, "MODEL_DEMAND"] < 0).any():
+        raise ValueError("MODEL_DEMAND must be non-negative")
+    allowed_splits = {"train", "validation", "test"}
+    if not set(series.SPLIT.astype(str)).issubset(allowed_splits):
+        raise ValueError("SPLIT must contain only train, validation and test")
+    for key, group in series.groupby(KEYS, sort=False, dropna=False):
+        bounds = {name: group.loc[group.SPLIT == name, "PERIOD"] for name in allowed_splits}
+        if any(bounds[name].empty for name in allowed_splits):
+            raise ValueError(f"Series {key} does not contain all chronological splits")
+        if not (bounds["train"].max() < bounds["validation"].min() and
+                bounds["validation"].max() < bounds["test"].min()):
+            raise ValueError(f"Chronological split overlap/order violation for series {key}")
     features,pred,forecast_metrics,forecast_report=train_and_predict(series,random_state=int(seed),winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
@@ -197,8 +224,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "interpretation":"Risk probabilities are isotonic-calibrated on validation-period simulated labels and evaluated on test-period simulated labels. Brier scores are not evidence of observed hospital stockout prediction.",
       "limitations":"SCMD has no observed stock, orders, lead times or stockout events. Inventory, lead-time demand, scenarios and stockout labels are simulated."}
     (out/"pipeline_report.json").write_text(json.dumps(report,indent=2,default=str))
-    wins=int(stats.SIGNIFICANT_WIN.sum()) if len(stats) else 0
-    losses=int(stats.SIGNIFICANT_LOSS.sum()) if len(stats) else 0
+    wins=int(stats.get("SIGNIFICANT_WIN",pd.Series(dtype=bool)).sum())
+    losses=int(stats.get("SIGNIFICANT_LOSS",pd.Series(dtype=bool)).sum())
     verdict = [
         "# Final Research Verdict (C1–C6)",
         "",
