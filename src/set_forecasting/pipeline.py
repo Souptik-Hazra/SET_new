@@ -93,6 +93,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         ablation_rows.append(pd.concat([g[keys+["SPLIT"]].reset_index(drop=True),ab],axis=1))
     rad_df=pd.concat(rad,ignore_index=True);rad_df["METHOD"]="RADCSR"
     ablation_df=pd.concat(ablation_rows,ignore_index=True)
+    ablation_df.to_parquet(proc/"radcsr_ablations.parquet",index=False)
     baseline=risk_baseline_probabilities(joined, seed=seed)
     rad_prob=rad_df[keys+["SPLIT","METHOD","RADCSR_PROBABILITY"]].rename(columns={"RADCSR_PROBABILITY":"SHORTAGE_PROBABILITY"})
     raw_probabilities=pd.concat([baseline,rad_prob,ablation_df],ignore_index=True)
@@ -104,6 +105,19 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     rad_df.to_parquet(proc/"radcsr_risk_details.parquet",index=False)
     eval_prob=calibrated.drop(columns=["STOCKOUT_LABEL"],errors="ignore")
     scores=brier_by_method(eval_prob,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
+    ablation_test=calibrated[calibrated.METHOD.str.startswith("RADCSR")].copy()
+    if len(ablation_test):
+        ablation_test["BRIER"]=(ablation_test.SHORTAGE_PROBABILITY-ablation_test.STOCKOUT_LABEL)**2
+        ablation_summary=ablation_test.groupby(["SCENARIO_ID","METHOD"],as_index=False).agg(
+            BRIER_SCORE=("BRIER","mean"),N=("BRIER","size"))
+    else:
+        ablation_summary=pd.DataFrame(columns=["SCENARIO_ID","METHOD","BRIER_SCORE","N"])
+    ablation_summary.to_csv(out/"tables/phase7_ablation_metrics.csv",index=False)
+    inventory.groupby("SCENARIO_ID",as_index=False).agg(
+        SIMULATED_STOCKOUT_RATE=("STOCKOUT_LABEL","mean"),
+        MEAN_SHORTAGE_QUANTITY=("SHORTAGE_QUANTITY","mean"),
+        MEAN_AVAILABLE_STOCK=("AVAILABLE_STOCK","mean")
+    ).to_csv(out/"tables/phase6_inventory_scenarios.csv",index=False)
     stats=series_bootstrap_holm(eval_prob,inventory,n_boot,seed)
     stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)
     if len(stats):
@@ -171,4 +185,34 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "interpretation":"Risk probabilities are isotonic-calibrated on validation-period simulated labels and evaluated on test-period simulated labels. Brier scores are not evidence of observed hospital stockout prediction.",
       "limitations":"SCMD has no observed stock, orders, lead times or stockout events. Inventory, lead-time demand, scenarios and stockout labels are simulated."}
     (out/"pipeline_report.json").write_text(json.dumps(report,indent=2,default=str))
+    wins=int(stats.SIGNIFICANT_WIN.sum()) if len(stats) else 0
+    losses=int(stats.SIGNIFICANT_LOSS.sum()) if len(stats) else 0
+    verdict = [
+        "# Final Research Verdict (C1–C6)",
+        "",
+        "This verdict is generated from the current pipeline run. All inventory and stockout outcomes are simulated.",
+        "",
+        f"## C1 — Forecasting performance",
+        f"Forecast model: {forecast_report.get('model', 'not reported')}. Test metrics are in `output/tables/forecast_metrics.csv`; no universal pass threshold is asserted.",
+        "",
+        "## C2 — Reliability monitoring",
+        f"Reliability rows: {len(reliability)}. Signal correlations above 0.70: {len(high_corr)}. Review `output/tables/reliability_signal_correlations.csv` and reliability baseline metrics.",
+        "",
+        "## C3 — RADCSR monotonicity",
+        f"Acceptance gate: **{mono['gate_status']}** across {mono['cases_checked']} held-out series/scenario cases.",
+        "",
+        "## C4 — Scenario stress behaviour",
+        f"Test scenarios evaluated: {len(mean_rel)}. Reliability and RADCSR risk summaries are recorded in `pipeline_report.json`; stress lift is descriptive, not a real-world validation.",
+        "",
+        "## C5 — Comparative risk performance",
+        f"Significant wins after global Holm correction: {wins}. Significant losses: {losses}. Full paired series bootstrap and sign-flip results are in `output/tables/radcsr_vs_baselines_bootstrap_holm.csv`.",
+        "",
+        "## C6 — Clinical priority",
+        f"{clinical_status if isinstance(clinical_status, str) else 'Verified VEN mapping supplied; see clinical priority ranking comparison.'}",
+        "",
+        "## Interpretation boundary",
+        "SCMD does not contain observed stock-on-hand, procurement receipts, supplier lead times or stockout events. Therefore simulated Brier scores, simulated stockout labels and synthetic stress tests cannot establish observed hospital stockout prediction performance. Clinical priority conclusions require verified VEN provenance and complete cohort coverage.",
+        ""
+    ]
+    (out/"final_verdict.md").write_text("\\n".join(verdict),encoding="utf-8")
     return report
