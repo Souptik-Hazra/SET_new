@@ -502,3 +502,18 @@ def test_inventory_rejects_missing_calendar_months():
 
     with pytest.raises(ValueError, match="contiguous calendar months"):
         simulate_inventory(x)
+
+def test_all_four_radcsr_probability_sweeps_pass_with_conditional_capped_mean():
+    from src.set_forecasting.risk.radcsr import radcsr_probability, infer_lead_time_distribution
+    reliability = np.round(np.arange(0.0, 1.0001, 0.05), 2)
+    q10, q50, q90, lead = 80.0, 100.0, 130.0, 2.0
+    mu, sigma = infer_lead_time_distribution(q10, q50, q90, lead)
+    for availability in (mu + sigma, max(0.0, mu - sigma)):
+        out = radcsr_probability(
+            np.full(len(reliability), q10), np.full(len(reliability), q50),
+            np.full(len(reliability), q90), np.full(len(reliability), availability),
+            np.full(len(reliability), lead), reliability,
+        )
+        for column in ("RADCSR_DISTRIBUTION_PROBABILITY", "RADCSR_PROBABILITY"):
+            values = out[column].to_numpy(float)
+            assert np.all(np.diff(values) >= -1e-10), (column, availability, values.tolist())
