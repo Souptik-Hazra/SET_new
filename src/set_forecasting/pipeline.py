@@ -15,7 +15,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     series=pd.read_parquet(series_path)
     features,pred,forecast_metrics,forecast_report=train_and_predict(series)
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
-    forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
+    forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)\n    if len(features):\n        per_series=[]\n        for key,g in pred.groupby(KEYS,sort=False,dropna=False):\n            y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)\n            per_series.append(dict(zip(KEYS,key),N_TEST=len(g),WAPE=float(np.abs(y-q).sum()/max(np.abs(y).sum(),1e-9)*100),MAE=float(np.mean(np.abs(y-q)))))\n        per_series=pd.DataFrame(per_series)\n        per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)\n        outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())\n    else:\n        per_series=pd.DataFrame();outlier_count=0
     if pred.empty:raise RuntimeError("No test predictions were generated; check cohort size and chronological split.")
     reliability=build_reliability_index(pred)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
@@ -53,16 +53,16 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     rad_df.to_parquet(proc/"radcsr_risk_details.parquet",index=False)
     scores=brier_by_method(probabilities,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
     stats=series_bootstrap_holm(probabilities,inventory,n_boot,seed)
-    stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)
+    stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)\n    if len(stats):\n        stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
     sample=joined.iloc[0]
     mono=monotonicity_audit(float(sample.Q10),float(sample.Q50),float(sample.Q90),
         float(sample.AVAILABLE_STOCK),float(sample.LEAD_TIME_MONTHS))
     (out/"radcsr_monotonicity_audit.json").write_text(json.dumps(mono,indent=2))
     mean_rel=scenarios.groupby("SCENARIO_ID").R_REL.mean().to_dict()
-    report={"forecast":forecast_report,"prediction_rows":len(pred),"reliability_rows":len(reliability),
+    report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,"outlier_995_count":outlier_count,"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),"scenario_rows":len(scenarios),"ablation_rows":len(ablation_df),
       "inventory_rows":len(inventory),"risk_probability_rows":len(probabilities),
-      "signal_correlations_above_0_70":high_corr,"mean_reliability_by_scenario":mean_rel,
+      "signal_correlations_above_0_70":high_corr,"mean_reliability_by_scenario":mean_rel,"stress_reliability_lift_vs_stable":{k:float(v-mean_rel.get("S1_Stable",0)) for k,v in mean_rel.items()},
       "monotonicity_audit":{k:v for k,v in mono.items() if k!="probability_curve"},
       "bootstrap_resamples":n_boot,"disclaimer":DISCLAIMER,
       "clinical_priority":"Not computed: no verified clinical VEN mapping supplied.",
