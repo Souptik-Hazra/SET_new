@@ -14,14 +14,14 @@ def _score(g,name):
       "PICP_80":float(np.mean((y>=lo)&(y<=hi))),"MPIW_80":float(np.mean(hi-lo)),
       "PINBALL_10":pin(.1,lo),"PINBALL_50":pin(.5,mid),"PINBALL_90":pin(.9,hi)}
 
-def train_and_predict(series,min_train_rows=100,random_state=42):
+def train_and_predict(series,min_train_rows=100,random_state=42,winsor_quantile=.995):
     x=series.copy()
     x["MODEL_DEMAND_WINSORIZED"]=np.nan;x["OUTLIER_995_FLAG"]=False
     x["_ORIGINAL_MODEL_DEMAND"]=pd.to_numeric(x.MODEL_DEMAND,errors="coerce")
     for _,idx in x.groupby(SERIES_KEYS,sort=False,dropna=False).groups.items():
         g=x.loc[idx];train_g=g[(g.SPLIT=="train")&(~g.OBSERVATION_MISSING.astype(bool))]
         positive=pd.to_numeric(train_g.MODEL_DEMAND,errors="coerce");positive=positive[positive>0]
-        threshold=float(positive.quantile(.995)) if len(positive) else np.inf
+        threshold=float(positive.quantile(winsor_quantile)) if len(positive) else np.inf
         values=pd.to_numeric(g.MODEL_DEMAND,errors="coerce")
         x.loc[idx,"OUTLIER_995_FLAG"]=values>threshold
         x.loc[idx,"WINSOR_LIMIT_995"]=threshold
