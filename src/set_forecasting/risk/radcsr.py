@@ -43,21 +43,34 @@ def radcsr_probability(q10,q50,q90,availability,lead_time,r_rel,
       "L_EFF":np.asarray(leff).reshape(-1),"RADCSR_RAW_PROBABILITY":raw_flat,
       "RADCSR_PROBABILITY":prob,"R_REL":ra,"STOCKOUTS_ARE_OBSERVED":0,"OUTCOME_TYPE":"SIMULATED"})
 
-def radcsr_ablations(frame):
-    """Return full RADCSR plus the requested one-component ablations."""
+def radcsr_ablations(frame, kappa_sigma=.75, kappa_mu=.50, kappa_l=1.5,
+                     horizon_cap=2.0, weights=None):
+    """Return RADCSR ablations using the same configured coefficients as the full model."""
     x=frame
     e=x.R_E.to_numpy(float);b=x.R_B.to_numpy(float);c=x.R_C.to_numpy(float);d=x.R_D.to_numpy(float)
     r_full=x.R_REL.to_numpy(float)
+    w=weights or {"error":.35,"bias":.25,"coverage":.25,"drift":.15}
+    total=float(sum(w.values()))
+    if total <= 0 or any(v < 0 for v in w.values()):
+        raise ValueError("Ablation weights must be non-negative with a positive sum")
+    w={k:float(v)/total for k,v in w.items()}
+    def without(name):
+        remaining={k:v for k,v in w.items() if k != name}
+        scale=sum(remaining.values())
+        if scale <= 0:
+            raise ValueError(f"Cannot ablate the only active reliability signal: {name}")
+        return sum(remaining[k]*{"error":e,"bias":b,"coverage":c,"drift":d}[k]
+                   for k in remaining)/scale
     variants={
-      "RADCSR":(r_full,.75,.50,1.5,2.0),
-      "RADCSR_noBias":((.35*e+.25*c+.15*d)/.75,.75,.50,1.5,2.0),
-      "RADCSR_noCoverage":((.35*e+.25*b+.15*d)/.75,.75,.50,1.5,2.0),
-      "RADCSR_noDrift":((.35*e+.25*b+.25*c)/.85,.75,.50,1.5,2.0),
+      "RADCSR":(r_full,kappa_sigma,kappa_mu,kappa_l,horizon_cap),
+      "RADCSR_noBias":(without("bias"),kappa_sigma,kappa_mu,kappa_l,horizon_cap),
+      "RADCSR_noCoverage":(without("coverage"),kappa_sigma,kappa_mu,kappa_l,horizon_cap),
+      "RADCSR_noDrift":(without("drift"),kappa_sigma,kappa_mu,kappa_l,horizon_cap),
       # Clinical weights are intentionally neutral without verified VEN provenance.
-      "RADCSR_noClinical":(r_full,.75,.50,1.5,2.0),
-      "RADCSR_noCap":(r_full,.75,.50,1.5,None),
-      "RADCSR_noHorizon":(r_full,.75,.50,0.0,2.0),
-      "RADCSR_singleSignal":(e,.75,.50,1.5,2.0)}
+      "RADCSR_noClinical":(r_full,kappa_sigma,kappa_mu,kappa_l,horizon_cap),
+      "RADCSR_noCap":(r_full,kappa_sigma,kappa_mu,kappa_l,None),
+      "RADCSR_noHorizon":(r_full,kappa_sigma,kappa_mu,0.0,horizon_cap),
+      "RADCSR_singleSignal":(e,kappa_sigma,kappa_mu,kappa_l,horizon_cap)}
     outputs=[]
     for name,(r,ks,km,kl,cap) in variants.items():
         result=radcsr_probability(x.Q10.to_numpy(),x.Q50.to_numpy(),x.Q90.to_numpy(),
