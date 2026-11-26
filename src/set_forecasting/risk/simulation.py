@@ -1,4 +1,4 @@
-"""Seven synthetic scenarios, periodic-review inventory and comparable risk baselines."""
+"""Nine synthetic scenarios, periodic-review inventory and comparable risk baselines."""
 import hashlib
 import numpy as np
 import pandas as pd
