@@ -176,6 +176,8 @@ def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
                             on=keys, how="inner", validate="many_to_one")
     x["SERIES_ID"] = x[KEYS].astype(str).agg("|".join, axis=1)
     x["LOSS"] = (x.SHORTAGE_PROBABILITY - x.STOCKOUT_LABEL) ** 2
+    if int(n_boot) < 100:
+        raise ValueError("n_boot must be at least 100 for stable resampling")
     rng = np.random.default_rng(seed)
     results = []
     for scenario, group in x.groupby("SCENARIO_ID", sort=True):
@@ -188,11 +190,18 @@ def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
             n = len(differences)
             if n < 2:
                 continue
-            boot = rng.choice(differences, size=(int(n_boot), n), replace=True).mean(axis=1)
+            # Chunk resampling to bound peak memory when the full SCMD cohort has
+            # tens or hundreds of thousands of independent series.
+            boot = np.empty(int(n_boot), dtype=float)
+            null_means = np.empty(int(n_boot), dtype=float)
+            batch_size = max(1, min(64, int(2_000_000 / max(n, 1))))
+            for start in range(0, int(n_boot), batch_size):
+                stop = min(int(n_boot), start + batch_size)
+                size = stop - start
+                boot[start:stop] = rng.choice(differences, size=(size, n), replace=True).mean(axis=1)
+                signs = rng.choice(np.array([-1.0, 1.0]), size=(size, n))
+                null_means[start:stop] = (signs * differences).mean(axis=1)
             observed = float(differences.mean())
-            # Paired randomisation test under the sharp null of exchangeability.
-            signs = rng.choice(np.array([-1.0, 1.0]), size=(int(n_boot), n))
-            null_means = (signs * differences).mean(axis=1)
             p_value = float((1 + np.count_nonzero(np.abs(null_means) >= abs(observed))) /
                             (int(n_boot) + 1))
             results.append({
