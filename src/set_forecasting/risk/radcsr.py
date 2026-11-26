@@ -28,20 +28,41 @@ def _tail(mu, sigma, availability):
 
 def _adjusted_distribution(q10, q50, q90, availability, lead, reliability,
                            kappa_sigma, kappa_mu, kappa_l, horizon_cap):
+    """Apply conditional, availability-capped reliability adjustments.
+
+    If A < mu_L, mean uplift and horizon extension are active, but the
+    effective lead-time mean is capped at A. If A >= mu_L, both are disabled:
+    only sigma_L is widened. This prevents mean overshoot from reversing the
+    adjusted-distribution tail as reliability worsens.
+    """
     mu, sigma = infer_lead_time_distribution(q10, q50, q90, lead)
-    lead = np.maximum(np.asarray(lead, dtype=float), 1.0)
+    lead = np.asarray(lead, dtype=float)
     reliability = np.clip(np.asarray(reliability, dtype=float), 0.0, 1.0)
     availability = np.asarray(availability, dtype=float)
+    low_availability = availability < mu
+
     sigma_adj = sigma * (1.0 + kappa_sigma * reliability)
-    mu_adj = mu + np.where(availability < mu, mu * kappa_mu * reliability, 0.0)
-    lead_eff = lead * (1.0 + kappa_l * reliability)
+    # The specified cap is applied to the mean itself, before horizon scaling.
+    mu_adj = np.where(
+        low_availability,
+        np.minimum(mu * (1.0 + kappa_mu * reliability), availability),
+        mu,
+    )
+    # Horizon extension is conditional on A < mu_L only.
+    lead_eff = np.where(
+        low_availability,
+        lead * (1.0 + kappa_l * reliability),
+        lead,
+    )
     if horizon_cap is not None:
         if float(horizon_cap) < 1.0:
             raise ValueError("horizon_cap must be >= 1 or None")
         lead_eff = np.minimum(lead_eff, float(horizon_cap) * lead)
     ratio = lead_eff / lead
-    return (mu_adj * ratio, sigma_adj * np.sqrt(ratio),
-            mu, sigma, sigma_adj, mu_adj, lead_eff)
+    # Also cap the mean contribution from horizon extension at availability.
+    mu_eff = np.where(low_availability, np.minimum(mu_adj * ratio, availability), mu)
+    sigma_eff = sigma_adj * np.sqrt(ratio)
+    return (mu_eff, sigma_eff, mu, sigma, sigma_adj, mu_adj, lead_eff)
 
 
 def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
@@ -73,16 +94,22 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
         kappa_sigma, kappa_mu, kappa_l, horizon_cap)
     baseline = _tail(mu, sigma, availability)
     adjusted = _tail(mu_eff, sigma_eff, availability)
-    # Monotone risk uplift: reliability penalty adds non-negative log-survival
-    # pressure, with exact equality to the unadjusted distribution at R_REL=0.
-    lead_ratio = lead_eff / np.maximum(np.asarray(lead_time, dtype=float), 1.0)
+    # The adjusted mean is always <= availability in the low-availability
+    # regime and equals mu_L in the high-availability regime. Therefore
+    # adjusted <= 0.5, and widening sigma moves the tail monotonically toward 0.5.
+    low_availability = availability < mu
+    lead_ratio = lead_eff / np.maximum(np.asarray(lead_time, dtype=float), 1e-12)
     severity = (np.log1p(kappa_sigma * reliability) +
-                np.log1p(kappa_mu * reliability * (availability < mu)) +
-                np.log(np.maximum(lead_ratio, 1.0)))
-    probability = baseline + (1.0 - baseline) * (1.0 - np.exp(-severity))
-    # Keep the adjusted-distribution tail separate from the monotone uplift score.
-    # The score is calibrated downstream on validation labels only.
-    probability = np.clip(probability, 0.0, 1.0)
+                low_availability * (
+                    np.log1p(kappa_mu * reliability) +
+                    np.log(np.maximum(lead_ratio, 1.0))
+                ))
+    uplift_fraction = 1.0 - np.exp(-severity)
+    # Separate monotone uplift: interpolate the adjusted tail toward its 0.5
+    # ceiling. If adjusted is 0.5 (A < mu_L under the specified cap), it stays
+    # 0.5. Otherwise both the adjusted tail and uplift fraction are nondecreasing.
+    probability = adjusted + (0.5 - adjusted) * uplift_fraction
+    probability = np.clip(probability, 0.0, 0.5)
     raw = np.asarray(adjusted, dtype=float)
     return pd.DataFrame({
         "MU_L": mu.reshape(-1), "SIGMA_L": sigma.reshape(-1),
