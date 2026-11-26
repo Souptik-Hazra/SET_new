@@ -20,11 +20,11 @@ All inventory, lead times, stress scenarios and stockout labels are simulated. B
 
 ## RADCSR
 RADCSR is the contribution, not a standalone forecaster:
-1. Quantile LightGBM P10/P50/P90 supplies the demand distribution.
+1. Quantile LightGBM P10/P50/P90 supplies the demand distribution. P10–P90 is a nominal central 80% interval, so forecast evaluation reports PICP_80. The 90% reliability target is assessed separately using a prequential conformal interval around P50.
 2. Prequential error, bias, coverage and CUSUM drift signals form (R_{rel}).
 3. Spread, conditional mean and effective horizon adjustments map (R_{rel}), distribution and simulated availability to a shortage probability.
 
-Default weights are fixed before evaluation: error .35, bias .25, coverage .25, drift .15. Pairwise signal correlations above .70 are reported. A two-window shift detector is explicitly labelled as a simple shift detector, not ADWIN.
+Default weights are fixed before evaluation: error .35, bias .25, coverage .25, drift .15. The coverage signal uses past-only 90% conformal intervals; it does not treat P10–P90 as a 90% interval. Pairwise signal correlations above .70 are reported. A two-window shift detector is explicitly labelled as a simple shift detector, not ADWIN.
 
 The monotonicity audit tests a fixed distribution/availability/lead-time curve over (R_{rel}in[0,1]). Both raw adjusted probability and the monotone envelope are retained. The monotone envelope is an explicit model constraint, not evidence of calibration; calibration must be assessed separately.
 
