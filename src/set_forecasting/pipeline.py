@@ -28,9 +28,11 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     if not isinstance(cfg, dict):
         raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
     resolved_config = dict(cfg)
-    resolved_config.setdefault("seed", seed)
-    resolved_config.setdefault("evaluation", {})
-    resolved_config["evaluation"]["bootstrap_resamples"] = n_boot
+    resolved_config["seed"] = int(seed)
+    resolved_config["evaluation"] = dict(cfg.get("evaluation") or {})
+    resolved_config["evaluation"]["bootstrap_resamples"] = int(n_boot)
+    resolved_config["inventory"] = dict(cfg.get("inventory") or {})
+    resolved_config["inventory"]["lead_time_months"] = list(resolved_config["inventory"].get("lead_time_months", [1, 2, 3]))
     (out / "tables").mkdir(parents=True, exist_ok=True)
     (out / "resolved_config.json").write_text(json.dumps(resolved_config, indent=2, default=str), encoding="utf-8")
     rel_cfg=cfg.get("reliability",{});risk_cfg=cfg.get("radcsr",{});inv_cfg=cfg.get("inventory",{});data_cfg=cfg.get("data",{})
@@ -92,7 +94,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             value=float(corr.loc[a,b])
             if np.isfinite(value) and abs(value)>.70:high_corr.append({"signal_a":a,"signal_b":b,"correlation":value})
     # Generate validation and test scenarios together so test reliability has a validation warm-up.
-    scenarios=make_scenarios(reliability,seed)
+    configured_lead_times = tuple(inv_cfg.get("lead_time_months", [1, 2, 3]))
+    scenarios=make_scenarios(reliability,seed,lead_times=configured_lead_times)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
         scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights")))
@@ -203,7 +206,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             "higher_reliability_penalty":bool(value>=stable_rel)}
     report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
       "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
-      "reliability_baseline_rows":len(intervals),"scenario_rows":len(scenarios),"ablation_rows":len(ablation_df),
+      "reliability_baseline_rows":len(intervals),
+      "reliability_score_semantics":{"canonical_column":"R_UNRELIABILITY","legacy_alias":"R_REL","direction":"higher_values_mean_worse_forecast_reliability"},
+      "configured_lead_time_months":list(configured_lead_times),"scenario_rows":len(scenarios),"ablation_rows":len(ablation_df),
       "inventory_rows":len(inventory),"risk_probability_rows":len(raw_probabilities),
       "calibrated_test_probability_rows":len(calibrated),
       "calibrator_status_counts":calibrated.CALIBRATOR_STATUS.value_counts().to_dict(),
