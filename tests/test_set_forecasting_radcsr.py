@@ -166,7 +166,7 @@ def test_radcsr_ablation_uses_configured_coefficients():
     x["R_REL"] = .45
     default = radcsr_ablations(x)
     configured = radcsr_ablations(
-        x, kappa_sigma=1.2, kappa_mu=.8, kappa_l=2.0,
+        x, kappa_sigma=.6, kappa_mu=.8, kappa_l=2.0,
         horizon_cap=3.0,
         weights={"error": .1, "bias": .2, "coverage": .3, "drift": .4},
     )
@@ -244,27 +244,26 @@ def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
     assert not result.SIGNIFICANT_LOSS.any()
 
 
-def test_availability_cap_makes_low_availability_tail_exactly_half():
+def test_low_availability_regime_is_strictly_discriminating():
     from src.set_forecasting.risk.radcsr import radcsr_probability
     r = np.linspace(0.0, 1.0, 21)
     out = radcsr_probability(5.0, 10.0, 15.0, 8.0, 2.0, r)
-    np.testing.assert_allclose(out.MU_L_EFFECTIVE, 8.0)
-    np.testing.assert_allclose(out.RADCSR_DISTRIBUTION_PROBABILITY, 0.5)
-    np.testing.assert_allclose(out.RADCSR_PROBABILITY, 0.5)
-    assert (out.MU_L_EFFECTIVE <= 8.0).all()
+    assert (out.MU_L_EFFECTIVE > 8.0).all()
+    assert np.all(np.diff(out.RADCSR_DISTRIBUTION_PROBABILITY) > 0)
+    assert np.all(np.diff(out.RADCSR_PROBABILITY) > 0)
     assert (out.L_EFF >= 2.0).all()
 
 
-def test_high_availability_disables_mean_shift_and_horizon_extension():
+def test_high_availability_mean_approaches_availability_without_crossing():
     from src.set_forecasting.risk.radcsr import radcsr_probability
-    r = np.linspace(0.0, 1.0, 21)
-    out = radcsr_probability(5.0, 10.0, 15.0, 30.0, 2.0, r)
-    np.testing.assert_allclose(out.MU_ADJ, out.MU_L)
-    np.testing.assert_allclose(out.MU_L_EFFECTIVE, out.MU_L)
-    np.testing.assert_allclose(out.L_EFF, 2.0)
+    r = np.linspace(0.0, 1.0, 101)
+    availability = 30.0
+    out = radcsr_probability(5.0, 10.0, 15.0, availability, 2.0, r)
+    assert (out.MU_L_EFFECTIVE < availability).all()
+    assert np.all(np.diff(out.MU_L_EFFECTIVE) > 0)
+    assert np.all(np.diff(out.RADCSR_DISTRIBUTION_PROBABILITY) > 0)
+    assert np.all(np.diff(out.RADCSR_PROBABILITY) > 0)
     assert out.SIGMA_ADJ.is_monotonic_increasing
-    assert out.RADCSR_DISTRIBUTION_PROBABILITY.is_monotonic_increasing
-    assert out.RADCSR_PROBABILITY.is_monotonic_increasing
 
 
 def test_radcsr_rejects_nonpositive_lead_and_nonfinite_coefficients():
@@ -503,7 +502,7 @@ def test_inventory_rejects_missing_calendar_months():
     with pytest.raises(ValueError, match="contiguous calendar months"):
         simulate_inventory(x)
 
-def test_all_four_radcsr_probability_sweeps_pass_with_conditional_capped_mean():
+def test_all_four_radcsr_probability_sweeps_have_strictly_positive_increments():
     from src.set_forecasting.risk.radcsr import radcsr_probability, infer_lead_time_distribution
     reliability = np.round(np.arange(0.0, 1.0001, 0.05), 2)
     q10, q50, q90, lead = 80.0, 100.0, 130.0, 2.0
@@ -513,7 +512,18 @@ def test_all_four_radcsr_probability_sweeps_pass_with_conditional_capped_mean():
             np.full(len(reliability), q10), np.full(len(reliability), q50),
             np.full(len(reliability), q90), np.full(len(reliability), availability),
             np.full(len(reliability), lead), reliability,
+            kappa_sigma=.50, kappa_mu=.75, kappa_l=1.5, horizon_cap=2.0,
         )
         for column in ("RADCSR_DISTRIBUTION_PROBABILITY", "RADCSR_PROBABILITY"):
             values = out[column].to_numpy(float)
-            assert np.all(np.diff(values) >= -1e-10), (column, availability, values.tolist())
+            assert np.all(np.diff(values) > 0.0), (column, availability, values.tolist())
+    high = radcsr_probability(q10, q50, q90, mu + sigma, lead, reliability,
+                              kappa_sigma=.50, kappa_mu=.75)
+    assert (high.MU_L_EFFECTIVE < mu + sigma).all()
+
+
+def test_radcsr_enforces_mean_coefficient_at_least_sigma_coefficient():
+    import pytest
+    with pytest.raises(ValueError, match="kappa_mu >= kappa_sigma"):
+        radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, .5,
+                           kappa_sigma=.75, kappa_mu=.50)
