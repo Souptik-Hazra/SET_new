@@ -239,6 +239,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     verdict = [
         "# Final Research Verdict (C1–C6)",
         "",
+        DISCLAIMER,
         "This verdict is generated from the current pipeline run. All inventory and stockout outcomes are simulated.",
         "",
         f"## C1 — Forecasting performance",
