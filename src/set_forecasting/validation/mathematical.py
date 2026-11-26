@@ -150,6 +150,62 @@ def probability_calibration():
  }
 
 
+
+def probability_calibration_by_demand_class():
+ raw=load("data/processed/raw_risk_probabilities.parquet")
+ inv=load("data/processed/simulated_inventory.parquet")
+ series=load("data/processed/scmd_monthly_series.parquet")
+ classes={}
+ for key,g in series.groupby(KEYS,sort=False,dropna=False):
+  train=g[g.SPLIT=="train"].sort_values("PERIOD")
+  classes[tuple(key)]=demand_class(train["MODEL_DEMAND"])[0]
+ x=raw[raw.METHOD=="RADCSR"].merge(
+   inv[KEYS+["PERIOD","SCENARIO_ID","STOCKOUT_LABEL"]],
+   on=KEYS+["PERIOD","SCENARIO_ID"],how="inner",validate="many_to_one")
+ x["DEMAND_CLASS"]=[classes.get(tuple(row),"intermittent")
+                    for row in x[KEYS].itertuples(index=False,name=None)]
+ x=x[x.STOCKOUT_LABEL.notna() & x.SHORTAGE_PROBABILITY.notna()].copy()
+ def metric(g,pcol):
+  if g.empty:return {"n":0,"brier":None,"ece_10":None,"calibration_in_large":None}
+  y=g.STOCKOUT_LABEL.to_numpy(float); p=np.clip(g[pcol].to_numpy(float),0,1); ece=0.
+  for lo,hi in zip(np.linspace(0,1,11)[:-1],np.linspace(0,1,11)[1:]):
+   m=(p>=lo)&((p<hi) if hi<1 else (p<=hi))
+   if m.any():ece+=float(m.mean()*abs(y[m].mean()-p[m].mean()))
+  return {"n":len(y),"brier":float(np.mean((p-y)**2)),"ece_10":ece,
+          "calibration_in_large":float(y.mean()-p.mean())}
+ results={}
+ for cls,g in x.groupby("DEMAND_CLASS",sort=True):
+  v=g[g.SPLIT=="validation"].copy().sort_values("PERIOD")
+  test=g[g.SPLIT=="test"].copy()
+  periods=np.sort(v.PERIOD.unique())
+  if len(periods)<2:
+   results[cls]={"status":"INSUFFICIENT_VALIDATION_PERIODS","validation_periods":len(periods),
+                 "validation_n":len(v),"test_n":len(test)}
+   continue
+  cut=max(1,int(len(periods)*.70)); fit_periods=set(periods[:cut])
+  fit=v[v.PERIOD.isin(fit_periods)].copy()
+  val_eval=v[~v.PERIOD.isin(fit_periods)].copy()
+  if len(fit)<20 or fit.STOCKOUT_LABEL.nunique()<2 or val_eval.empty:
+   results[cls]={"status":"INSUFFICIENT_CLASSWISE_CALIBRATION_DATA",
+      "fit_n":len(fit),"fit_classes":int(fit.STOCKOUT_LABEL.nunique()),
+      "validation_evaluation_n":len(val_eval),"test_n":len(test)}
+   continue
+  iso=IsotonicRegression(y_min=0,y_max=1,out_of_bounds="clip").fit(
+      fit.SHORTAGE_PROBABILITY,fit.STOCKOUT_LABEL)
+  val_eval["CAL"]=iso.predict(val_eval.SHORTAGE_PROBABILITY)
+  test["CAL"]=iso.predict(test.SHORTAGE_PROBABILITY)
+  vm=metric(val_eval,"CAL");tm=metric(test,"CAL")
+  gate=lambda m: bool(m["ece_10"] is not None and m["calibration_in_large"] is not None
+       and m["ece_10"]<=.10 and abs(m["calibration_in_large"])<=.05)
+  results[cls]={"status":"EVALUATED","fit_n":len(fit),
+      "validation_holdout":vm,"validation_gate_pass":gate(vm),
+      "held_out_test":tm,"test_gate_pass":gate(tm),
+      "both_gates_pass":bool(gate(vm) and gate(tm))}
+ return {"class_definition":"ADI/CV2 computed exclusively from each series' training split; ADI threshold 1.32, CV2 threshold 0.49.",
+         "calibrator":"Separate isotonic calibrator per demand class, fitted on earlier 70% of validation periods and evaluated on later 30%; frozen calibrator then evaluated on held-out test.",
+         "by_demand_class":results}
+
+
 def signal_perturbations():
  n=40
  base=pd.DataFrame({KEYS[0]:["ORG"]*n,KEYS[1]:["VMP"]*n,KEYS[2]:["U"]*n,"PERIOD":pd.date_range("2020-01-01",periods=n,freq="MS"),"MODEL_DEMAND":100.,"Q10":90.,"Q50":100.,"Q90":110.})
@@ -196,6 +252,7 @@ def run():
   return result
  result["lead_time_distribution_validation"]=lead_time_validation()
  result["probability_calibration"]=probability_calibration()
+ result["probability_calibration_by_demand_class"]=probability_calibration_by_demand_class()
  result["reliability_signal_perturbations"]=signal_perturbations()
  result["drift_detection"]=drift_metrics()
  result["signal_correlations"]=correlations()
@@ -203,7 +260,7 @@ def run():
  (out/"mathematical_validation.json").write_text(json.dumps(result,indent=2,default=str),encoding="utf-8")
  lines=["# Phase B Mathematical Validation","",DISCLAIMER,"","## Dual-probability formulas",json.dumps(FORMULAS,indent=2),"","## Monotonicity sweeps"]
  for x in sweeps: lines.append(f"{x['quantity']} / {x['regime']}: {'PASS' if x['pass'] else 'FAIL'}; sequence={x['sequence']}")
- for key in ("lead_time_distribution_validation","probability_calibration","reliability_signal_perturbations","drift_detection","signal_correlations"):
+ for key in ("lead_time_distribution_validation","probability_calibration","probability_calibration_by_demand_class","reliability_signal_perturbations","drift_detection","signal_correlations"):
   lines += ["",f"## {key}",json.dumps(result[key],indent=2,default=str)]
  (out/"mathematical_validation.md").write_text("\n".join(lines),encoding="utf-8")
  print("2. CALIBRATION PER DEMAND CLASS"); print(json.dumps(result["lead_time_distribution_validation"],indent=2))
@@ -211,6 +268,7 @@ def run():
  print("4. DRIFT DETECTION"); print(json.dumps(result["drift_detection"],indent=2))
  print("5. SIGNAL CORRELATION MATRIX / REDUNDANCY FLAGS"); print(json.dumps(result["signal_correlations"],indent=2))
  print("RADCSR_PROBABILITY CALIBRATION"); print(json.dumps(result["probability_calibration"],indent=2))
+ print("RADCSR_PROBABILITY CALIBRATION BY ADI/CV2 CLASS"); print(json.dumps(result["probability_calibration_by_demand_class"],indent=2))
  print("Reports: output/mathematical_validation.md and output/mathematical_validation.json")
  return result
 
