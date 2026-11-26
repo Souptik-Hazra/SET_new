@@ -11,7 +11,7 @@ SCMD_COLUMNS = [
 ]
 
 def get_scmd_path(path=None):
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[3]
     source = Path(path) if path else root / "data" / "raw" / "combined_secondary_care_medicines.csv"
     if not source.is_absolute():
         source = root / source
