@@ -23,7 +23,8 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
         positive=pd.to_numeric(train_g.MODEL_DEMAND,errors="coerce");positive=positive[positive>0]
         threshold=float(positive.quantile(.995)) if len(positive) else np.inf
         values=pd.to_numeric(g.MODEL_DEMAND,errors="coerce")
-        x.loc[idx,"OUTLIER_995_FLAG"]=values>threshold\n        x.loc[idx,"WINSOR_LIMIT_995"]=threshold
+        x.loc[idx,"OUTLIER_995_FLAG"]=values>threshold
+        x.loc[idx,"WINSOR_LIMIT_995"]=threshold
         x.loc[idx,"MODEL_DEMAND_WINSORIZED"]=np.where(values>0,np.minimum(values,threshold),values)
     x[TARGET]=x.MODEL_DEMAND_WINSORIZED
     features=create_features(x)
