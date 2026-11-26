@@ -329,4 +329,4 @@ def test_inventory_sensitivity_grid_runs_on_shared_scenario_streams():
                                    initial_covers=(1., 2.), target_covers=(2.,))
     assert len(result) == 2
     assert set(result.INITIAL_COVER_MONTHS) == {1.0, 2.0}
-    assert set(result.OUTCOME_TYPE) == set() if "OUTCOME_TYPE" in result else True
+    assert result.SIMULATED_STOCKOUT_RATE.between(0, 1).all()
