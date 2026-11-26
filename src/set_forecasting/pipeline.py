@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import yaml
 from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
@@ -12,9 +13,12 @@ from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
     out=Path(output_dir);proc=Path(processed_dir)
+    config_path=Path("config/config.yaml")
+    cfg=yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    rel_cfg=cfg.get("reliability",{});risk_cfg=cfg.get("radcsr",{});inv_cfg=cfg.get("inventory",{});data_cfg=cfg.get("data",{})
     (out/"tables").mkdir(parents=True,exist_ok=True);(out/"figures").mkdir(parents=True,exist_ok=True);proc.mkdir(parents=True,exist_ok=True)
     series=pd.read_parquet(series_path)
-    features,pred,forecast_metrics,forecast_report=train_and_predict(series)
+    features,pred,forecast_metrics,forecast_report=train_and_predict(series,winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
     test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
@@ -30,9 +34,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     outlier_summary=features.groupby(KEYS,as_index=False).agg(WINSOR_LIMIT_995=("WINSOR_LIMIT_995","first"),OUTLIER_COUNT=("OUTLIER_995_FLAG","sum"),N_PERIODS=("PERIOD","size"))
     outlier_summary.to_csv(out/"tables/per_series_outlier_summary.csv",index=False)
     if pred.empty:raise RuntimeError("No validation/test predictions; check cohort size and chronological split.")
-    reliability=build_reliability_index(pred)
+    reliability=build_reliability_index(pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights"))
     reliability.to_parquet(proc/"reliability.parquet",index=False)
-    intervals=interval_baselines(pred);intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
+    intervals=interval_baselines(pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
     interval_test=intervals[intervals.SPLIT=="test"] if "SPLIT" in intervals else intervals
     interval_summary=interval_test.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
     interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
@@ -46,16 +50,19 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     scenarios=make_scenarios(reliability,seed)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
-        scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND)))
+        scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights")))
     scenarios=pd.concat(scenario_rel,ignore_index=True)
-    inventory=simulate_inventory(scenarios)
+    inventory=simulate_inventory(scenarios,service_level=float(inv_cfg.get("service_level",.95)),
+        initial_cover=float(inv_cfg.get("initial_cover_months",2)),target_cover=float(inv_cfg.get("target_cover_months",3)))
     keys=KEYS+["PERIOD","SCENARIO_ID"]
     joined=scenarios.merge(inventory[keys+["AVAILABLE_STOCK","STOCKOUT_LABEL","DEMAND"]],
         on=keys,how="inner",validate="one_to_one")
     rad=[];ablation_rows=[]
     for _,g in joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         result=radcsr_probability(g.Q10.to_numpy(),g.Q50.to_numpy(),g.Q90.to_numpy(),
-            g.AVAILABLE_STOCK.to_numpy(),g.LEAD_TIME_MONTHS.to_numpy(),g.R_REL.to_numpy())
+            g.AVAILABLE_STOCK.to_numpy(),g.LEAD_TIME_MONTHS.to_numpy(),g.R_REL.to_numpy(),
+            kappa_sigma=float(risk_cfg.get("kappa_sigma",.75)),kappa_mu=float(risk_cfg.get("kappa_mu",.50)),
+            kappa_l=float(risk_cfg.get("kappa_l",1.5)))
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g).reset_index(drop=True)
