@@ -147,28 +147,60 @@ def brier_by_method(probabilities,inventory):
     x["BRIER"]=(x.SHORTAGE_PROBABILITY-x.STOCKOUT_LABEL)**2
     return x.groupby(["SCENARIO_ID","METHOD"],as_index=False).agg(BRIER_SCORE=("BRIER","mean"),N=("BRIER","size"))
 
-def series_bootstrap_holm(probabilities,inventory,n_boot=2000,seed=42):
-    keys=KEYS+["PERIOD","SCENARIO_ID"];x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner")
-    x["SERIES_ID"]=x[KEYS].astype(str).agg("|".join,axis=1);x["LOSS"]=(x.SHORTAGE_PROBABILITY-x.STOCKOUT_LABEL)**2
-    rng=np.random.default_rng(seed);results=[]
-    for scenario,g in x.groupby("SCENARIO_ID"):
-        p=g.pivot_table(index="SERIES_ID",columns="METHOD",values="LOSS",aggfunc="mean").dropna()
-        if "RADCSR" not in p:continue
-        for method in [m for m in p.columns if m!="RADCSR"]:
-            d=(p.RADCSR-p[method]).to_numpy()
-            if not len(d):continue
-            boot=rng.choice(d,(n_boot,len(d)),replace=True).mean(axis=1)
-            pv=float(min(1,2*min(np.mean(boot<=0),np.mean(boot>=0))))
-            results.append({"SCENARIO_ID":scenario,"COMPARISON":method,"N_SERIES":len(d),
-                "MEAN_BRIER_DIFFERENCE":float(d.mean()),"CI_LOWER":float(np.quantile(boot,.025)),
-                "CI_UPPER":float(np.quantile(boot,.975)),"P_VALUE":pv})
-    if not results:return pd.DataFrame()
-    order=np.argsort([r["P_VALUE"] for r in results]);running=0.;m=len(results)
-    for rank,idx in enumerate(order):
-        running=max(running,min(1.,results[idx]["P_VALUE"]*(m-rank)))
-        results[idx]["HOLM_ADJUSTED_P"]=running
-        results[idx]["SIGNIFICANT_WIN"]=bool(running<.05 and results[idx]["CI_UPPER"]<0)
-        results[idx]["SIGNIFICANT_LOSS"]=bool(running<.05 and results[idx]["CI_LOWER"]>0)
+def series_bootstrap_holm(probabilities, inventory, n_boot=2000, seed=42):
+    """Paired cluster bootstrap CI and paired sign-flip test, with global Holm correction.
+
+    The independent resampling unit is the organisation/VMP/unit series, not months.
+    All scenario-method hypotheses are corrected together as one predeclared family.
+    """
+    keys = KEYS + ["PERIOD", "SCENARIO_ID"]
+    x = probabilities.merge(inventory[keys + ["STOCKOUT_LABEL"]],
+                            on=keys, how="inner", validate="many_to_one")
+    x["SERIES_ID"] = x[KEYS].astype(str).agg("|".join, axis=1)
+    x["LOSS"] = (x.SHORTAGE_PROBABILITY - x.STOCKOUT_LABEL) ** 2
+    rng = np.random.default_rng(seed)
+    results = []
+    for scenario, group in x.groupby("SCENARIO_ID", sort=True):
+        pivot = group.pivot_table(index="SERIES_ID", columns="METHOD",
+                                  values="LOSS", aggfunc="mean").dropna()
+        if "RADCSR" not in pivot.columns:
+            continue
+        for method in [m for m in pivot.columns if m != "RADCSR"]:
+            differences = (pivot["RADCSR"] - pivot[method]).to_numpy(float)
+            n = len(differences)
+            if n < 2:
+                continue
+            boot = rng.choice(differences, size=(int(n_boot), n), replace=True).mean(axis=1)
+            observed = float(differences.mean())
+            # Paired randomisation test under the sharp null of exchangeability.
+            signs = rng.choice(np.array([-1.0, 1.0]), size=(int(n_boot), n))
+            null_means = (signs * differences).mean(axis=1)
+            p_value = float((1 + np.count_nonzero(np.abs(null_means) >= abs(observed))) /
+                            (int(n_boot) + 1))
+            results.append({
+                "SCENARIO_ID": scenario, "COMPARISON": method, "N_SERIES": n,
+                "MEAN_BRIER_DIFFERENCE": observed,
+                "CI_LOWER": float(np.quantile(boot, .025)),
+                "CI_UPPER": float(np.quantile(boot, .975)),
+                "P_VALUE": p_value,
+                "BOOTSTRAP_RESAMPLES": int(n_boot),
+                "TEST": "paired_series_sign_flip"
+            })
+    if not results:
+        return pd.DataFrame()
+    # Holm step-down adjusted p-values are monotone in sorted raw p-value order.
+    order = np.argsort([row["P_VALUE"] for row in results])
+    running = 0.0
+    m = len(results)
+    for rank, idx in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * results[idx]["P_VALUE"]))
+        results[idx]["HOLM_ADJUSTED_P"] = running
+        results[idx]["SIGNIFICANT_WIN"] = bool(
+            running < .05 and results[idx]["CI_UPPER"] < 0 and
+            results[idx]["MEAN_BRIER_DIFFERENCE"] < 0)
+        results[idx]["SIGNIFICANT_LOSS"] = bool(
+            running < .05 and results[idx]["CI_LOWER"] > 0 and
+            results[idx]["MEAN_BRIER_DIFFERENCE"] > 0)
     return pd.DataFrame(results)
 
 def calibrate_risk_probabilities(probabilities,inventory,min_validation_rows=30):
