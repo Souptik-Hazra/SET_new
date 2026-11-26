@@ -23,20 +23,41 @@ def make_scenarios(predictions,seed=42):
     return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame()
 
 def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover=3.):
+    """Periodic review: receive → serve → measure lead-time shortage → reorder.
+
+    AVAILABLE_STOCK includes on-hand stock plus pipeline receipts due within the
+    simulated lead-time horizon. STOCKOUT_LABEL compares realised future lead-time
+    demand with that availability; it is a retrospective synthetic label.
+    """
     rows=[];z=float(norm.ppf(service_level))
     for keys,g in scenarios.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
-        g=g.sort_values("PERIOD");stock=max(0,float(g.Q90.iloc[0])*initial_cover);pipeline=[]
+        g=g.sort_values("PERIOD");demand_values=np.maximum(g.SCENARIO_DEMAND.to_numpy(float),0)
+        leads=np.maximum(g.LEAD_TIME_MONTHS.to_numpy(int),1)
+        stock=max(0,float(g.Q90.iloc[0])*initial_cover);pipeline=[]
         for t,row in enumerate(g.itertuples()):
-            receipts=sum(q for due,q in pipeline if due<=t);pipeline=[(due,q) for due,q in pipeline if due>t]
-            available=stock+receipts;demand=max(0,float(row.SCENARIO_DEMAND))
-            shortage=max(0,demand-available);stock=max(0,available-demand)
-            lead=max(1,int(row.LEAD_TIME_MONTHS))
+            receipts=sum(q for due,q in pipeline if due<=t)
+            pipeline=[(due,q) for due,q in pipeline if due>t]
+            on_hand=stock+receipts
+            lead=int(leads[t])
+            pipeline_available=sum(q for due,q in pipeline if due<=t+lead)
+            available=on_hand+pipeline_available
+            lead_end=min(len(g),t+lead)
+            realised_lead_demand=float(demand_values[t:lead_end].sum())
+            current_demand=float(demand_values[t])
+            shortage=max(0,current_demand-on_hand)
+            stock=max(0,on_hand-current_demand)
             order_up_to=max(0,float(row.Q90)*target_cover+z*max(0,float(row.Q90-row.Q10))*np.sqrt(lead))
-            position=stock+sum(q for _,q in pipeline);order=max(0,order_up_to-position)
+            position=stock+sum(q for _,q in pipeline)
+            order=max(0,order_up_to-position)
             if order>0:pipeline.append((t+lead,order))
-            rec=dict(zip(KEYS+["SCENARIO_ID"],keys));rec.update(PERIOD=row.PERIOD,DEMAND=demand,
-                AVAILABLE_STOCK=available,ENDING_STOCK=stock,RECEIPTS=receipts,ORDER_PLACED=order,
-                LEAD_TIME_MONTHS=lead,SHORTAGE_QUANTITY=shortage,STOCKOUT_LABEL=int(shortage>0),
+            rec=dict(zip(KEYS+["SCENARIO_ID"],keys))
+            rec.update(PERIOD=row.PERIOD,DEMAND=current_demand,
+                LEAD_TIME_DEMAND=realised_lead_demand,AVAILABLE_STOCK=available,
+                ON_HAND_AVAILABLE=on_hand,ENDING_STOCK=stock,RECEIPTS=receipts,
+                PIPELINE_WITHIN_LEAD_TIME=pipeline_available,ORDER_PLACED=order,
+                LEAD_TIME_MONTHS=lead,SHORTAGE_QUANTITY=shortage,
+                MONTHLY_STOCKOUT_LABEL=int(shortage>0),
+                STOCKOUT_LABEL=int(realised_lead_demand>available),
                 STOCKOUTS_ARE_OBSERVED=0,OUTCOME_TYPE="SIMULATED")
             rows.append(rec)
     return pd.DataFrame(rows)
