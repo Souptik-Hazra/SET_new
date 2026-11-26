@@ -12,7 +12,7 @@ from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,
 from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
-def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=42,n_boot=2000):
+def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
     root = get_project_root()
     def project_path(value):
         path = Path(value)
@@ -27,6 +27,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         cfg = {}
     if not isinstance(cfg, dict):
         raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
+    seed = int(cfg.get("seed", 42) if seed is None else seed)
     resolved_config = dict(cfg)
     resolved_config["seed"] = int(seed)
     resolved_config["evaluation"] = dict(cfg.get("evaluation") or {})
@@ -195,15 +196,15 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     if not mono_pass:
         raise RuntimeError("RADCSR monotonicity acceptance gate failed; refusing to publish research outputs.")
     test_scenarios=scenarios[scenarios.SPLIT=="test"]
-    mean_rel=test_scenarios.groupby("SCENARIO_ID").R_REL.mean().to_dict()
+    mean_unreliability=test_scenarios.groupby("SCENARIO_ID").R_UNRELIABILITY.mean().to_dict()
     mean_risk=rad_df[rad_df.SPLIT=="test"].groupby("SCENARIO_ID").RADCSR_PROBABILITY.mean().to_dict()
-    stable_rel=mean_rel.get("S1_Stable")
+    stable_unreliability=mean_unreliability.get("S1_Stable")
     stress_checks={}
-    for scenario,value in mean_rel.items():
-        if scenario=="S1_Stable" or stable_rel is None:
+    for scenario,value in mean_unreliability.items():
+        if scenario=="S1_Stable" or stable_unreliability is None:
             continue
-        stress_checks[scenario]={"reliability_lift_vs_stable":float(value-stable_rel),
-            "higher_reliability_penalty":bool(value>=stable_rel)}
+        stress_checks[scenario]={"unreliability_increase_vs_stable":float(value-stable_unreliability),
+            "higher_unreliability_severity":bool(value>=stable_unreliability)}
     report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
       "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),
@@ -212,8 +213,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
       "inventory_rows":len(inventory),"risk_probability_rows":len(raw_probabilities),
       "calibrated_test_probability_rows":len(calibrated),
       "calibrator_status_counts":calibrated.CALIBRATOR_STATUS.value_counts().to_dict(),
-      "signal_correlations_above_0_70":high_corr,"mean_reliability_by_test_scenario":mean_rel,
-      "stress_reliability_lift_vs_stable":{k:float(v-mean_rel.get("S1_Stable",0)) for k,v in mean_rel.items()},
+      "signal_correlations_above_0_70":high_corr,"mean_unreliability_by_test_scenario":mean_unreliability,
+      "stress_unreliability_increase_vs_stable":{k:float(v-mean_unreliability.get("S1_Stable",0)) for k,v in mean_unreliability.items()},
       "monotonicity_audit":{k:v for k,v in mono.items() if k!="cases"},
       "scenario_reliability_acceptance":stress_checks,
       "mean_radcsr_probability_by_test_scenario":mean_risk,
@@ -246,7 +247,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         f"Acceptance gate: **{mono['gate_status']}** across {mono['cases_checked']} held-out series/scenario cases.",
         "",
         "## C4 — Scenario stress behaviour",
-        f"Test scenarios evaluated: {len(mean_rel)}. Reliability and RADCSR risk summaries are recorded in `pipeline_report.json`; stress lift is descriptive, not a real-world validation.",
+        f"Test scenarios evaluated: {len(mean_unreliability)}. Forecast-unreliability and RADCSR risk summaries are recorded in `pipeline_report.json`; stress lift is descriptive, not a real-world validation.",
         "",
         "## C5 — Comparative risk performance",
         f"Significant wins after global Holm correction: {wins}. Significant losses: {losses}. Full paired series bootstrap and sign-flip results are in `output/tables/radcsr_vs_baselines_bootstrap_holm.csv`.",
