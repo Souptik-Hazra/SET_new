@@ -101,7 +101,18 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
         raise ValueError("Inventory input must have one row per series, scenario and period")
     rows=[];z=float(norm.ppf(service_level))
     for keys,g in scenarios.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
-        g=g.sort_values("PERIOD")
+        g = g.sort_values("PERIOD").copy()
+        periods = pd.to_datetime(g["PERIOD"], errors="coerce")
+        if periods.isna().any():
+            raise ValueError("Inventory PERIOD values must be valid monthly dates")
+        month_ordinals = periods.dt.to_period("M").astype("int64").to_numpy()
+        if len(np.unique(month_ordinals)) != len(month_ordinals):
+            raise ValueError("Inventory input must contain at most one row per calendar month")
+        if len(month_ordinals) > 1 and np.any(np.diff(month_ordinals) != 1):
+            raise ValueError(
+                "Inventory input must contain contiguous calendar months; "
+                "missing prediction months cannot be treated as one-month steps"
+            )
         raw_leads=pd.to_numeric(g.LEAD_TIME_MONTHS,errors="coerce").to_numpy(float)
         if np.any(~np.isfinite(raw_leads)) or np.any(raw_leads < 1) or np.any(raw_leads != np.floor(raw_leads)):
             raise ValueError("LEAD_TIME_MONTHS must contain finite positive whole-month values")
@@ -123,12 +134,33 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             # arrives after this demand horizon and cannot reduce its shortage.
             pipeline_available=sum(q for due,q in pipeline if due<=t+lead-1)
             available=on_hand+pipeline_available
-            lead_end=min(len(g),t+lead)
+            lead_end = min(len(g), t + lead)
             horizon_complete = (t + lead) <= len(g)
-            realised_lead_demand=float(demand_values[t:lead_end].sum())
-            current_demand=float(demand_values[t])
-            shortage=max(0,current_demand-on_hand)
-            stock=max(0,on_hand-current_demand)
+            horizon_demand = demand_values[t:lead_end]
+            realised_lead_demand = float(horizon_demand.sum())
+            current_demand = float(demand_values[t])
+            shortage = max(0, current_demand - on_hand)
+
+            # A lead-time stockout is path-dependent: a later receipt cannot
+            # satisfy demand that occurs before its arrival. Check the projected
+            # stock balance month by month using only receipts already in pipeline.
+            projected_stock = on_hand
+            lead_time_stockout_months = 0
+            if horizon_complete:
+                scheduled_receipts = {
+                    due: sum(q for receipt_due, q in pipeline if receipt_due == due)
+                    for due in range(t + 1, t + lead)
+                }
+                for offset, future_demand in enumerate(horizon_demand):
+                    period_index = t + offset
+                    if offset:
+                        projected_stock += scheduled_receipts.get(period_index, 0.0)
+                    if future_demand > projected_stock:
+                        lead_time_stockout_months += 1
+                        projected_stock = 0.0
+                    else:
+                        projected_stock -= float(future_demand)
+            stock = max(0, on_hand - current_demand)
             order_up_to=max(0,float(row.Q90)*target_cover+z*max(0,float(row.Q90-row.Q10))*np.sqrt(lead))
             position=stock+sum(q for _,q in pipeline)
             order=max(0,order_up_to-position)
@@ -139,8 +171,9 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
                 ON_HAND_AVAILABLE=on_hand,ENDING_STOCK=stock,RECEIPTS=receipts,
                 PIPELINE_WITHIN_LEAD_TIME=pipeline_available,ORDER_PLACED=order,
                 LEAD_TIME_MONTHS=lead,SHORTAGE_QUANTITY=shortage,
+                LEAD_TIME_STOCKOUT_MONTHS=lead_time_stockout_months if horizon_complete else np.nan,
                 MONTHLY_STOCKOUT_LABEL=int(shortage>0),
-                STOCKOUT_LABEL=int(realised_lead_demand>available) if horizon_complete else np.nan,
+                STOCKOUT_LABEL=int(lead_time_stockout_months > 0) if horizon_complete else np.nan,
                 STOCKOUTS_ARE_OBSERVED=0,OUTCOME_TYPE="SIMULATED")
             rows.append(rec)
     return pd.DataFrame(rows)
