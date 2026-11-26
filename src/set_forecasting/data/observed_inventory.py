@@ -57,6 +57,8 @@ def load_observed_inventory(path):
         raise ValueError("STOCKOUT_FLAG must be observed binary values 0 or 1")
     if "CLOSING_STOCK" in frame:
         frame["CLOSING_STOCK"] = pd.to_numeric(frame.CLOSING_STOCK, errors="coerce")
+        if frame.CLOSING_STOCK.isna().any() or not np.isfinite(frame.CLOSING_STOCK).all() or (frame.CLOSING_STOCK < 0).any():
+            raise ValueError("CLOSING_STOCK must contain finite non-negative values")
         expected = frame.OPENING_STOCK + frame.RECEIPTS - frame.ISSUES
         frame["STOCK_BALANCE_RESIDUAL"] = frame.CLOSING_STOCK - expected
     frame["OUTCOME_TYPE"] = "OBSERVED"
