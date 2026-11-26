@@ -274,3 +274,29 @@ def test_inventory_right_censors_incomplete_lead_time_horizon():
     assert inv.loc[0, "STOCKOUT_LABEL"] in (0, 1)
     assert inv.loc[len(inv) - 1, "LEAD_TIME_HORIZON_COMPLETE"] == 0
     assert pd.isna(inv.loc[len(inv) - 1, "STOCKOUT_LABEL"])
+
+
+def test_observed_inventory_loader_requires_provenance_and_valid_labels(tmp_path):
+    from src.set_forecasting.data.observed_inventory import load_observed_inventory
+    source = tmp_path / "observed_inventory.csv"
+    pd.DataFrame({
+        "ODS_CODE": ["ORG01"], "VMP_SNOMED_CODE": ["000123"],
+        "UNIT_OF_MEASURE_IDENTIFIER": ["U1"], "PERIOD": ["2025-01-15"],
+        "OPENING_STOCK": [100], "RECEIPTS": [20], "ISSUES": [30],
+        "LEAD_TIME_DAYS": [14], "STOCKOUT_FLAG": [0],
+        "SOURCE_NAME": ["Hospital inventory system"], "SOURCE_VERSION": ["2025-01"],
+        "SOURCE_URL": ["https://example.org/data-dictionary"],
+    }).to_csv(source, index=False)
+    result = load_observed_inventory(source)
+    assert result.loc[0, "VMP_SNOMED_CODE"] == "000123"
+    assert result.loc[0, "OUTCOME_TYPE"] == "OBSERVED"
+    assert result.loc[0, "STOCKOUTS_ARE_OBSERVED"] == 1
+
+
+def test_observed_inventory_loader_rejects_missing_provenance(tmp_path):
+    import pytest
+    from src.set_forecasting.data.observed_inventory import load_observed_inventory
+    source = tmp_path / "bad_inventory.csv"
+    pd.DataFrame({"ODS_CODE": ["ORG01"]}).to_csv(source, index=False)
+    with pytest.raises(ValueError, match="missing columns"):
+        load_observed_inventory(source)
