@@ -17,7 +17,7 @@ Every inventory level, lead time, stress scenario and stockout label generated h
 
 ## Layout
 
-See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). New implementation code belongs in `src/set_forecasting/`; legacy `src/scmd_*.py` modules remain compatibility entry points during migration.
+See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). New implementation code belongs in `src/set_forecasting/`. Root-level `src/scmd_phase1.py`, `src/data_loader.py`, `src/features.py` and `src/preprocessing.py` are compatibility wrappers. The older `src/forecasting/`, `src/risk/`, `src/inventory/` and `src/reliability/` modules retain the original pharmacy-schema implementation for historical comparison; the SCMD pipeline does not import them.
 
 ## Setup
 
