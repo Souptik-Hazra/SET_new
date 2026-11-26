@@ -90,7 +90,10 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0),
             weights=rel_cfg.get("weights")).reset_index(drop=True)
-        ablation_rows.append(pd.concat([g[keys+["SPLIT"]].reset_index(drop=True),ab],axis=1))
+        ablation_keys = pd.concat([g[keys+["SPLIT"]].reset_index(drop=True)] * ab.METHOD.nunique(), ignore_index=True)
+        if len(ablation_keys) != len(ab):
+            raise RuntimeError("Ablation key expansion does not match method output rows")
+        ablation_rows.append(pd.concat([ablation_keys,ab.reset_index(drop=True)],axis=1))
     rad_df=pd.concat(rad,ignore_index=True);rad_df["METHOD"]="RADCSR"
     ablation_df=pd.concat(ablation_rows,ignore_index=True)
     ablation_df.to_parquet(proc/"radcsr_ablations.parquet",index=False)
@@ -127,10 +130,16 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     ven_path=root / "data" / "reference" / "clinical_ven_mapping.csv"
     if ven_path.exists():
         mapping=load_verified_ven_mapping(ven_path)
+        evaluated_codes=set(rad_df.loc[rad_df.SPLIT=="test","VMP_SNOMED_CODE"].astype(str))
+        mapped_codes=set(mapping.VMP_SNOMED_CODE.astype(str))
+        missing_codes=sorted(evaluated_codes-mapped_codes)
+        if missing_codes:
+            raise ValueError(f"VEN mapping is incomplete for held-out cohort: {len(missing_codes):,} VMP codes missing")
         clinical_detail,clinical_summary=compare_clinical_priority(rad_df[rad_df.SPLIT=="test"],mapping)
         clinical_detail.to_parquet(proc/"clinical_priority.parquet",index=False)
         clinical_summary.to_csv(out/"tables/clinical_priority_ranking_comparison.csv",index=False)
         clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),
+            "evaluated_medicines":len(evaluated_codes),"mapping_coverage":1.0,
             "ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}
     test_joined=joined[joined.SPLIT=="test"]
     if test_joined.empty:
