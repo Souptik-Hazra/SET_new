@@ -44,8 +44,8 @@ INVENTORY_CONFIGS = {
 def assign_ven_classes(df: pd.DataFrame, med_col: str = "MEDICINE_ID", demand_col: str = "DEMAND_CLEAN", seed: int = 42) -> pd.DataFrame:
     """Clinical VEN classes cannot be inferred from demand or randomly assigned."""
     raise ValueError(
-        "Synthetic VEN/substitutability assignment is disabled. Supply a verified "
-        "clinical classification source with medicine-level provenance instead."
+        "Clinical VEN classification cannot be synthetically assigned. "
+        "Supply a verified clinical classification source with medicine-level provenance instead."
     )
 
 
