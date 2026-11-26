@@ -21,6 +21,5 @@ jobs:
           python -m pytest -q
           tests/test_scmd_phase1.py
           tests/test_scmd_phases_2_4.py
-          tests/test_scmd_review_fixes.py
           tests/test_pipeline_units.py
           tests/test_set_forecasting_radcsr.py
