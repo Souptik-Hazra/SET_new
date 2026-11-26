@@ -17,7 +17,7 @@ def _score(g,name):
 def train_and_predict(series,min_train_rows=100,random_state=42):
     x=series.copy()
     # Train-only 99.5th percentile winsorisation; preserve original target for evaluation.
-    x["MODEL_DEMAND_WINSORIZED"]=np.nan;x["OUTLIER_995_FLAG"]=False
+    x["MODEL_DEMAND_WINSORIZED"]=np.nan;x["OUTLIER_995_FLAG"]=False;x["_ORIGINAL_MODEL_DEMAND"]=pd.to_numeric(x.MODEL_DEMAND,errors="coerce")
     for _,idx in x.groupby(SERIES_KEYS,sort=False,dropna=False).groups.items():
         g=x.loc[idx];train=g[(g.SPLIT=="train")&(~g.OBSERVATION_MISSING.astype(bool))]
         positive=pd.to_numeric(train.MODEL_DEMAND,errors="coerce");positive=positive[positive>0]
@@ -26,9 +26,9 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
         x.loc[idx,"OUTLIER_995_FLAG"]=values>threshold
         x.loc[idx,"MODEL_DEMAND_WINSORIZED"]=np.where(values>0,np.minimum(values,threshold),values)
     # Feature lags are generated from winsorised history, never from the full target.
-    original=x.MODEL_DEMAND.copy();x[TARGET]=x.MODEL_DEMAND_WINSORIZED
+    x[TARGET]=x.MODEL_DEMAND_WINSORIZED
     features=create_features(x)
-    features["MODEL_DEMAND"]=original.loc[features.index].to_numpy()
+    features["MODEL_DEMAND"]=features["_ORIGINAL_MODEL_DEMAND"]
     features["SERIES_ID"]=features[SERIES_KEYS].astype(str).agg("|".join,axis=1)
     categorical=[]
     for c in SERIES_KEYS:
@@ -36,7 +36,7 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
     cols=[c for c in FEATURES if c in features]+categorical
     for c in FEATURES:
         if c in features:features[c]=pd.to_numeric(features[c],errors="coerce")
-    train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=cols+[TARGET])
+    train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=cols+["MODEL_DEMAND_WINSORIZED"])
     val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=cols+[TARGET])
     test=features[(features.SPLIT=="test")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND"])
     models=[];status="naive_fallback"
@@ -48,7 +48,7 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
                 m=LGBMRegressor(objective="quantile",alpha=q,n_estimators=800,learning_rate=.03,
                   num_leaves=31,min_child_samples=30,subsample=.85,colsample_bytree=.85,
                   verbosity=-1,random_state=random_state,n_jobs=-1)
-                m.fit(train[cols],train[TARGET],categorical_feature=categorical,eval_set=[(val[cols],val[TARGET])],
+                m.fit(train[cols],train["MODEL_DEMAND_WINSORIZED"],categorical_feature=categorical,eval_set=[(val[cols],val[TARGET])],
                   callbacks=[lgb.early_stopping(50,verbose=False)])
                 models.append(m)
             status="quantile_lightgbm"
