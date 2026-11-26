@@ -140,7 +140,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     )
     included = cohort.loc[cohort["COHORT_INCLUDED"], KEY]
     series = series.merge(included.assign(_included=True), on=KEY, how="inner")
-    # Keep absent calendar months missing; zero is only valid for an observed source month.\n    series["DEMAND"] = series["MODEL_DEMAND"].where(~series["OBSERVATION_MISSING"])
+    # Keep absent calendar months missing; zero is only valid for an observed source month.
+    series["DEMAND"] = series["MODEL_DEMAND"].where(~series["OBSERVATION_MISSING"])
 
     # Flag high values, do not automatically winsorise genuine demand events.
     q = series.groupby(KEY)["DEMAND"]
@@ -225,7 +226,8 @@ def run_phase1_from_csv(source=None, output_root="output", processed_root="data/
     diagnostics_path = output_root / "phase1_diagnostics.json"
     aggregate_scmd(source, aggregated)
     return build_monthly_series(aggregated, series_path, cohort_path, diagnostics_path,
-                                min_periods=min_periods, min_nonzero=min_nonzero,\n                                train_frac=train_frac, val_frac=val_frac)
+                                min_periods=min_periods, min_nonzero=min_nonzero,
+                                train_frac=train_frac, val_frac=val_frac)
 
 def run_phase1(raw_df=None, **kwargs):
     """Compatibility wrapper: Phase 1 now reads the configured SCMD CSV on disk."""
