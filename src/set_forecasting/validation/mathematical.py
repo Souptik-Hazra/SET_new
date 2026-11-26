@@ -128,12 +128,13 @@ def signal_perturbations():
  noisy=base.copy(); noisy.loc[31:38,"MODEL_DEMAND"]=100.+np.array([20,40,80,160,320,640,1280,2560])
  wide=base.copy(); wide["Q10"]=70.; wide["Q90"]=130.
  isolated=base.copy(); isolated.loc[38,"MODEL_DEMAND"]+=0.1
- u,o,v,w,d=map(last,(under,over,noisy,wide,isolated))
+ sustained=base.copy(); sustained.loc[32:,"MODEL_DEMAND"]+=100.0
+ u,o,v,w,d,dr=map(last,(under,over,noisy,wide,isolated,sustained))
  return {
  "R_E":{"normalized":bool(all(0<=getattr(z,"R_E")<=1 for z in (b,u,o,v,w,d))),"responds_to_absolute_error":bool(u.R_E>b.R_E),"sign_flip_flat":bool(np.isclose(last(under.assign(MODEL_DEMAND=200-under.MODEL_DEMAND)).R_E,u.R_E)),"baseline":float(b.R_E),"perturbed":float(u.R_E)},
  "R_B":{"normalized":bool(all(0<=getattr(z,"R_B")<=1 and 0<=getattr(z,"R_B_SYMMETRIC")<=1 and 0<=getattr(z,"R_B_OVER")<=1 for z in (b,u,o,v,w,d))),"underforecast_penalty_exceeds_overforecast":bool(u.R_B>o.R_B),"symmetric_ablation_equal":bool(np.isclose(u.R_B_SYMMETRIC,o.R_B_SYMMETRIC)),"overforecast_separate":bool(o.R_B_OVER>0),"under_R_B":float(u.R_B),"over_R_B":float(o.R_B),"under_symmetric":float(u.R_B_SYMMETRIC),"over_symmetric":float(o.R_B_SYMMETRIC),"formula":"R_B=clip(2*(sigmoid(2*max(mean(actual-Q50),0)/scale)-0.5),0,1); R_B_OVER applies same transform to max(-mean(error),0)."},
  "R_C":{"normalized":bool(all(0<=getattr(z,"R_C")<=1 for z in (b,u,o,v,w,d))),"interval_width_only_flat":bool(np.isclose(w.R_C,b.R_C)),"responds_to_coverage_error":bool(v.R_C>b.R_C),"baseline":float(b.R_C),"perturbed":float(v.R_C)},
- "R_D":{"normalized":bool(all(0<=getattr(z,"R_D")<=1 for z in (b,u,o,v,w,d))),"isolated_small_error_no_alarm":bool(d.R_D==b.R_D),"baseline":float(b.R_D),"perturbed":float(d.R_D)}
+ "R_D":{"normalized":bool(all(0<=getattr(z,"R_D")<=1 for z in (b,u,o,v,w,d,dr))),"isolated_small_error_no_alarm":bool(d.R_D==b.R_D),"responds_to_sustained_shift":bool(dr.R_D>b.R_D),"baseline":float(b.R_D),"isolated_perturbation":float(d.R_D),"sustained_shift":float(dr.R_D)}
  }
 
 def drift_metrics():
