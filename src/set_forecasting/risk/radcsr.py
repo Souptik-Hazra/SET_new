@@ -28,60 +28,55 @@ def _tail(mu, sigma, availability):
 
 def _adjusted_distribution(q10, q50, q90, availability, lead, reliability,
                            kappa_sigma, kappa_mu, kappa_l, horizon_cap):
-    """Apply conditional, availability-capped reliability adjustments.
+    """Reliability-adjust lead-time demand using the two prescribed regimes.
 
-    If A < mu_L, mean uplift and horizon extension are active, but the
-    effective lead-time mean is capped at A. If A >= mu_L, both are disabled:
-    only sigma_L is widened. This prevents mean overshoot from reversing the
-    adjusted-distribution tail as reliability worsens.
+    A < mu: mu_eff = A + (mu-A)*(1+kappa_mu*R)*(L_eff/L).
+    A >= mu: mu_eff = A - (A-mu)*exp(-kappa_mu*R*L_eff/L).
+    L_eff = min(L*(1+kappa_l*R), L*horizon_cap).
+    sigma_eff = sigma*(1+kappa_sigma*R)*sqrt(L_eff/L).
+
+    For A < mu, kappa_mu >= kappa_sigma guarantees the standardized
+    exceedance distance is non-decreasing. For A >= mu, mu_eff remains
+    strictly below A for every finite R and approaches A asymptotically.
     """
     mu, sigma = infer_lead_time_distribution(q10, q50, q90, lead)
     lead = np.asarray(lead, dtype=float)
     reliability = np.clip(np.asarray(reliability, dtype=float), 0.0, 1.0)
     availability = np.asarray(availability, dtype=float)
+    ratio_raw = 1.0 + kappa_l * reliability
+    if horizon_cap is not None:
+        ratio_raw = np.minimum(ratio_raw, float(horizon_cap))
+    ratio = ratio_raw
     low_availability = availability < mu
-
+    mu_low = availability + (mu - availability) * (1.0 + kappa_mu * reliability) * ratio
+    mu_high = availability - (availability - mu) * np.exp(-kappa_mu * reliability * ratio)
+    mu_eff = np.where(low_availability, mu_low, mu_high)
     sigma_adj = sigma * (1.0 + kappa_sigma * reliability)
-    # The specified cap is applied to the mean itself, before horizon scaling.
+    sigma_eff = sigma_adj * np.sqrt(ratio)
+    lead_eff = lead * ratio
     mu_adj = np.where(
         low_availability,
-        np.minimum(mu * (1.0 + kappa_mu * reliability), availability),
-        mu,
+        availability + (mu - availability) * (1.0 + kappa_mu * reliability),
+        availability - (availability - mu) * np.exp(-kappa_mu * reliability),
     )
-    # Horizon extension is conditional on A < mu_L only.
-    lead_eff = np.where(
-        low_availability,
-        lead * (1.0 + kappa_l * reliability),
-        lead,
-    )
-    if horizon_cap is not None:
-        if float(horizon_cap) < 1.0:
-            raise ValueError("horizon_cap must be >= 1 or None")
-        lead_eff = np.minimum(lead_eff, float(horizon_cap) * lead)
-    ratio = lead_eff / lead
-    # Also cap the mean contribution from horizon extension at availability.
-    mu_eff = np.where(low_availability, np.minimum(mu_adj * ratio, availability), mu)
-    sigma_eff = sigma_adj * np.sqrt(ratio)
     return (mu_eff, sigma_eff, mu, sigma, sigma_adj, mu_adj, lead_eff)
 
-
 def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
-                       kappa_sigma=0.75, kappa_mu=0.50, kappa_l=1.5,
+                       kappa_sigma=0.50, kappa_mu=0.75, kappa_l=1.5,
                        horizon_cap=2.0, grid_size=101):
-    """Return a monotone reliability-conditioned risk score in [0, 1].
+    """Return separate adjusted-tail and monotone reliability-uplift scores.
 
-    RADCSR_DISTRIBUTION_PROBABILITY is the adjusted normal tail. Its mean
-    shift and horizon extension operate only when A < mu_L; the mean is capped
-    at availability both before and after horizon scaling. When A >= mu_L,
-    only sigma widens. This removes the mean-overshoot reversal observed at
-    commit e0826409.
+    Require kappa_mu >= kappa_sigma. For A < mu_L, the standardized
+    exceedance distance grows because (1+kappa_mu*R)/(1+kappa_sigma*R)
+    and sqrt(L_eff/L) are non-decreasing. For A >= mu_L, the positive
+    gap A-mu_eff=(A-mu_L)*exp(-kappa_mu*R*L_eff/L) strictly shrinks,
+    while sigma_eff grows; hence the tail strictly rises.
 
-    RADCSR_PROBABILITY is a separate monotone uplift toward 0.5:
-    p_adj + (0.5 - p_adj) * (1 - exp(-S)), where
-    S=log(1+kappa_sigma*R_rel)
-      + I(A<mu_L)*(log(1+kappa_mu*R_rel)+log(L_eff/L)).
-    It is not the adjusted-distribution tail. Validation-only calibration
-    and held-out evaluation are required before probability interpretation.
+    RADCSR_PROBABILITY = 1-(1-p_adj)*exp(-S), with
+    S=log(1+kappa_mu*R)+log(L_eff/L). This separate risk-uplift
+    transform is strictly increasing in both regimes for the configured
+    positive coefficients; it is not a calibrated probability until
+    validated on held-out labels.
     """
     values = [np.asarray(v, dtype=float) for v in
               (q10, q50, q90, availability, lead_time, r_rel)]
@@ -93,6 +88,10 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
     coefficients = np.asarray([kappa_sigma, kappa_mu, kappa_l], dtype=float)
     if np.any(~np.isfinite(coefficients)) or np.any(coefficients < 0):
         raise ValueError("RADCSR coefficients must be finite and non-negative")
+    if kappa_mu < kappa_sigma:
+        raise ValueError("Monotonicity constraint requires kappa_mu >= kappa_sigma")
+    if kappa_mu <= 0 or kappa_sigma <= 0:
+        raise ValueError("Strict probability discrimination requires positive kappa_mu and kappa_sigma")
     if horizon_cap is not None and (not np.isfinite(float(horizon_cap)) or float(horizon_cap) < 1.0):
         raise ValueError("horizon_cap must be finite and >= 1 or None")
     if np.any(availability < 0):
@@ -102,28 +101,17 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
         kappa_sigma, kappa_mu, kappa_l, horizon_cap)
     baseline = _tail(mu, sigma, availability)
     adjusted = _tail(mu_eff, sigma_eff, availability)
-    # The adjusted mean is always <= availability in the low-availability
-    # regime and equals mu_L in the high-availability regime. Therefore
-    # adjusted <= 0.5, and widening sigma moves the tail monotonically toward 0.5.
     low_availability = availability < mu
-    lead_ratio = lead_eff / np.maximum(np.asarray(lead_time, dtype=float), 1e-12)
-    severity = (np.log1p(kappa_sigma * reliability) +
-                low_availability * (
-                    np.log1p(kappa_mu * reliability) +
-                    np.log(np.maximum(lead_ratio, 1.0))
-                ))
+    ratio = lead_eff / np.maximum(np.asarray(lead_time, dtype=float), 1e-12)
+    severity = np.log1p(kappa_mu * reliability) + np.log(np.maximum(ratio, 1.0))
     uplift_fraction = 1.0 - np.exp(-severity)
-    # Separate monotone uplift: interpolate the adjusted tail toward its 0.5
-    # ceiling. If adjusted is 0.5 (A < mu_L under the specified cap), it stays
-    # 0.5. Otherwise both the adjusted tail and uplift fraction are nondecreasing.
-    probability = adjusted + (0.5 - adjusted) * uplift_fraction
-    probability = np.clip(probability, 0.0, 0.5)
-    raw = np.asarray(adjusted, dtype=float)
+    probability = adjusted + (1.0 - adjusted) * uplift_fraction
+    probability = np.clip(probability, 0.0, 1.0)
     return pd.DataFrame({
         "MU_L": mu.reshape(-1), "SIGMA_L": sigma.reshape(-1),
         "SIGMA_ADJ": sigma_adj.reshape(-1), "MU_ADJ": mu_adj.reshape(-1),
         "MU_L_EFFECTIVE": mu_eff.reshape(-1), "L_EFF": lead_eff.reshape(-1),
-        "RADCSR_DISTRIBUTION_PROBABILITY": raw.reshape(-1),
+        "RADCSR_DISTRIBUTION_PROBABILITY": np.asarray(adjusted, dtype=float).reshape(-1),
         "RADCSR_BASE_PROBABILITY": baseline.reshape(-1),
         "RADCSR_RAW_PROBABILITY": probability.reshape(-1),
         "RADCSR_PROBABILITY": probability.reshape(-1),
@@ -132,7 +120,7 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
     })
 
 
-def radcsr_ablations(frame, kappa_sigma=0.75, kappa_mu=0.50, kappa_l=1.5,
+def radcsr_ablations(frame, kappa_sigma=0.50, kappa_mu=0.75, kappa_l=1.5,
                      horizon_cap=2.0, weights=None, clinical_mapping=None):
     """Evaluate component ablations; clinical ablation requires verified VEN data."""
     required = KEYS + ["Q10", "Q50", "Q90", "AVAILABLE_STOCK",
@@ -195,18 +183,18 @@ def radcsr_ablations(frame, kappa_sigma=0.75, kappa_mu=0.50, kappa_l=1.5,
 
 
 def monotonicity_audit(q10, q50, q90, availability, lead_time,
-                       ks=.75, km=.50, kl=1.5, horizon_cap=2.0):
+                       ks=.50, km=.75, kl=1.5, horizon_cap=2.0):
     grid = np.linspace(0.0, 1.0, 101)
     result = radcsr_probability(np.full(101, q10), np.full(101, q50),
         np.full(101, q90), np.full(101, availability), np.full(101, lead_time),
         grid, ks, km, kl, horizon_cap)
     curve = result.RADCSR_PROBABILITY.to_numpy()
     steps = np.diff(curve)
-    passed = bool(np.all(steps >= -1e-10))
+    passed = bool(np.all(steps > 0.0))
     return {"raw_pass": passed, "envelope_pass": passed,
             "minimum_step": float(steps.min()), "probability_curve": curve.tolist(),
             "gate_status": "PASS" if passed else "FAIL",
-            "method": "analytic_monotone_risk_uplift_no_posthoc_envelope"}
+            "method": "strictly_increasing_analytic_risk_uplift_no_posthoc_envelope"}
 
 
 def block_bootstrap_lead_time_samples(q50_path, residual_history, lead, n_boot=500,
