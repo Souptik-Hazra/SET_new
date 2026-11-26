@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from src.set_forecasting.data.source import get_project_root
 from src.set_forecasting.risk.simulation import inventory_sensitivity
@@ -15,6 +16,7 @@ def main():
     parser.add_argument("--service-levels", default="0.90,0.95,0.99")
     parser.add_argument("--initial-covers", default="1,2")
     parser.add_argument("--target-covers", default="2,3")
+    parser.add_argument("--lead-times", default=None, help="Comma-separated base lead-time assumptions in months")
     args = parser.parse_args()
     root = get_project_root()
     source = Path(args.scenarios)
@@ -24,11 +26,16 @@ def main():
     if not destination.is_absolute():
         destination = root / destination
     scenarios = pd.read_parquet(source)
+    config_path = root / "config" / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    configured_leads = config.get("inventory", {}).get("lead_time_months", [1, 2, 3])
+    lead_times = tuple(float(x) for x in args.lead_times.split(",")) if args.lead_times else tuple(configured_leads)
     result = inventory_sensitivity(
         scenarios,
         service_levels=tuple(float(x) for x in args.service_levels.split(",")),
         initial_covers=tuple(float(x) for x in args.initial_covers.split(",")),
         target_covers=tuple(float(x) for x in args.target_covers.split(",")),
+        lead_times=lead_times,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(destination, index=False)
