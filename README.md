@@ -57,3 +57,20 @@ python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicin
 ```
 
 The pipeline records its resolved configuration in `output/resolved_config.json`.
+
+
+## Evaluation outputs and sensitivity analysis
+
+The active pipeline now excludes right-censored lead-time outcomes from probability calibration, Brier scoring and paired statistical comparisons. See `LEAD_TIME_HORIZON_COMPLETE` in `data/processed/simulated_inventory.parquet`. The final periods of each series may have incomplete lead-time horizons and are not treated as negative stockout labels.
+
+Held-out calibration diagnostics are written to `output/tables/risk_calibration_metrics.csv` (Brier score, log loss, expected calibration error, mean predicted probability and simulated event rate).
+
+The scenario streams are saved to `data/processed/scenario_streams.parquet`. After a successful pipeline run, run the inventory assumption sensitivity grid:
+
+```bash
+python scripts/run_inventory_sensitivity.py
+```
+
+The default grid compares service levels 0.90/0.95/0.99, initial cover 1/2 months and target cover 2/3 months. Results are written to `output/tables/inventory_sensitivity.csv`. All outcomes remain SIMULATED.
+
+For independently observed inventory data, follow [the observed inventory data contract](docs/OBSERVED_INVENTORY_DATA_CONTRACT.md). The repository includes a strict provenance and schema validator, but real-data evaluation is not enabled until an authorised observed inventory extract is supplied.
