@@ -76,7 +76,7 @@ def lead_time_validation():
 def probability_calibration():
  raw=load("data/processed/raw_risk_probabilities.parquet"); inv=load("data/processed/simulated_inventory.parquet")
  x=raw[raw.METHOD=="RADCSR"].merge(inv[KEYS+["PERIOD","SCENARIO_ID","STOCKOUT_LABEL"]],on=KEYS+["PERIOD","SCENARIO_ID"],how="inner",validate="many_to_one")
- x=x[x.STOCKOUT_LABEL.notna() & x.SHORTAGE_PROBABILITY.notna()]
+ x=x[x.STOCKOUT_LABEL.notna() & x.SHORTAGE_PROBABILITY.notna()].drop_duplicates(subset=KEYS+["PERIOD","SCENARIO_ID","SPLIT","METHOD"])
  def metric(g,pcol):
   y=g.STOCKOUT_LABEL.to_numpy(float); p=np.clip(g[pcol].to_numpy(float),0,1)
   if not len(y): return {"n":0,"brier":None,"ece_10":None,"calibration_in_large":None}
@@ -90,8 +90,9 @@ def probability_calibration():
  iso=IsotonicRegression(y_min=0,y_max=1,out_of_bounds="clip").fit(v.SHORTAGE_PROBABILITY,v.STOCKOUT_LABEL)
  v["CAL"]=iso.predict(v.SHORTAGE_PROBABILITY); t["CAL"]=iso.predict(t.SHORTAGE_PROBABILITY)
  vm=metric(v,"SHORTAGE_PROBABILITY"); vf=metric(v,"CAL"); tm=metric(t,"CAL")
- passed=bool(tm["ece_10"] is not None and tm["ece_10"]<=.10 and abs(tm["calibration_in_large"])<=.05)
- return {"validation_raw":vm,"validation_isotonic_fit_in_sample":vf,"held_out_test_after_validation_isotonic":tm,"held_out_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":passed},"validation_note":"Isotonic fit is trained on validation labels; its fit-sample metrics are not an independent calibration pass.","conclusion":"Held-out descriptive calibration gate passed on simulated labels." if passed else "Calibration gate failed/unavailable. RADCSR_PROBABILITY must not be interpreted as a calibrated probability."}
+ threshold_ok=lambda m: m["ece_10"] is not None and m["calibration_in_large"] is not None and m["ece_10"]<=.10 and abs(m["calibration_in_large"])<=.05
+ val_pass=bool(threshold_ok(vf)); test_pass=bool(threshold_ok(tm)); passed=val_pass and test_pass
+ return {"validation_raw":vm,"validation_isotonic_fit_in_sample":vf,"validation_calibration_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":val_pass},"held_out_test_after_validation_isotonic":tm,"held_out_gate":{"ECE_10_max":.10,"absolute_calibration_in_large_max":.05,"pass":test_pass},"validation_note":"The validation calibrator is fitted on validation labels; its fit-sample metrics are in-sample. Held-out test evaluation is the independent check.","conclusion":"Validation-fit and held-out descriptive calibration gates passed on simulated labels." if passed else "Calibration did not pass both validation-fit and held-out gates. RADCSR_PROBABILITY must not be interpreted as a calibrated probability."}
 
 def signal_perturbations():
  n=40
