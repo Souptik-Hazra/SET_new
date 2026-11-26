@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--min-nonzero",type=int,default=6)
     parser.add_argument("--bootstrap",type=int,default=2000)
     args=parser.parse_args()
-    run_phase1_from_csv(source=args.source,min_periods=args.min_periods,min_nonzero=args.min_nonzero)
+    run_phase1_from_csv(source=args.source,min_periods=args.min_periods,min_nonzero=args.min_nonzero,load_series=False)
     report=run_model_pipeline(n_boot=args.bootstrap)
     print(report)
 if __name__=="__main__":main()
