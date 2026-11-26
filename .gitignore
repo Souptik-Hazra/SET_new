@@ -1,22 +1,26 @@
-# Local datasets
+# Local source datasets and generated data
 /data/
+!/data/.gitkeep
+/dataset/
+/datasets/
+/output/
 /SET PROJECT/
 /PharmacyTransactionalDataset/
-/output/
 
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Virtual environments
+# Environments
 venv/
 .venv/
 env/
 
-# Jupyter
+# Jupyter and temporary files
 .ipynb_checkpoints/
-
-# Temporary files
 *.log
 .DS_Store

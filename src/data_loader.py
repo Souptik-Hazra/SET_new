@@ -1,78 +1,45 @@
-"""
-data_loader.py
-==============
-Loads and merges all pharmacy transaction CSVs into a single raw DataFrame.
-Adds source metadata columns (city, zone, pharmacy).
-Never modifies raw files.
-"""
-
-import os
-import glob
-import pandas as pd
+"""SCMD source loader. The source CSV is streamed and never loaded wholesale."""
+from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
 
+SCMD_COLUMNS = [
+    "YEAR_MONTH", "ODS_CODE", "VMP_SNOMED_CODE", "VMP_PRODUCT_NAME",
+    "UNIT_OF_MEASURE_IDENTIFIER", "UNIT_OF_MEASURE_NAME",
+    "TOTAL_QUANITY_IN_VMP_UNIT", "INDICATIVE_COST",
+]
 
-def load_all_csvs(base_dir: str) -> pd.DataFrame:
-    """
-    Discover and load all pharmacy CSVs from the given base directory.
-    Returns a single merged DataFrame with source metadata columns added.
-    """
-    pattern = os.path.join(base_dir, "**", "*.csv")
-    files = glob.glob(pattern, recursive=True)
+def get_scmd_path(path=None):
+    root = Path(__file__).resolve().parents[1]
+    source = Path(path) if path else root / "data" / "combined_secondary_care_medicines.csv"
+    if not source.is_absolute():
+        source = root / source
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"SCMD CSV not found: {source}. Place combined_secondary_care_medicines.csv in data/."
+        )
+    return source
 
-    # Separate the global test set
-    global_test_files = [f for f in files if "global_test_set" in os.path.basename(f).lower()]
-    city_files = [f for f in files if f not in global_test_files]
+def validate_scmd_header(path):
+    import csv
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as stream:
+        header = next(csv.reader(stream), [])
+    missing = [column for column in SCMD_COLUMNS if column not in header]
+    unexpected = [column for column in header if column not in SCMD_COLUMNS]
+    if missing or unexpected:
+        raise ValueError(f"SCMD schema mismatch. Missing={missing}; unexpected={unexpected}")
+    return header
 
-    logger.info(f"Found {len(city_files)} city/zone/pharmacy CSVs and {len(global_test_files)} global test files.")
+def load_scmd_csv(path=None, chunksize=200_000):
+    """Yield string-typed chunks; identifiers and leading zeros remain intact."""
+    import pandas as pd
+    source = get_scmd_path(path)
+    validate_scmd_header(source)
+    for chunk in pd.read_csv(source, dtype=str, chunksize=chunksize,
+                             keep_default_na=False, encoding="utf-8-sig"):
+        yield chunk
 
-    dfs = []
-
-    # Load city pharmacy files
-    for filepath in city_files:
-        parts = filepath.replace("\\", "/").split("/")
-        # Extract city/zone/pharmacy from path structure
-        city = next((p for p in parts if p.startswith("City")), "Unknown")
-        zone = next((p for p in parts if p.startswith("Zone")), "Unknown")
-        pharmacy = os.path.splitext(os.path.basename(filepath))[0]
-
-        try:
-            df = pd.read_csv(filepath, low_memory=False)
-            df["_city"] = city
-            df["_zone"] = zone
-            df["_pharmacy"] = pharmacy
-            df["_source_file"] = os.path.basename(filepath)
-            df["_is_test"] = False
-            dfs.append(df)
-        except Exception as e:
-            logger.warning(f"Failed to load {filepath}: {e}")
-
-    # Load global test set
-    for filepath in global_test_files:
-        try:
-            df = pd.read_csv(filepath, low_memory=False)
-            df["_city"] = "Global"
-            df["_zone"] = "Global"
-            df["_pharmacy"] = "global_test_set"
-            df["_source_file"] = os.path.basename(filepath)
-            df["_is_test"] = True
-            dfs.append(df)
-        except Exception as e:
-            logger.warning(f"Failed to load {filepath}: {e}")
-
-    if not dfs:
-        raise ValueError("No CSV files were loaded.")
-
-    merged = pd.concat(dfs, ignore_index=True)
-    logger.info(f"Merged raw DataFrame: {merged.shape[0]:,} rows, {merged.shape[1]} columns.")
-    return merged
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    base = os.path.join(os.path.dirname(__file__), "..", "PharmacyTransactionalDataset")
-    df = load_all_csvs(base)
-    print(df.head())
-    print(df.shape)
+# Backward-compatible explicit name; old pharmacy directory discovery is removed.
+def load_all_csvs(base_dir=None):
+    return load_scmd_csv(base_dir)

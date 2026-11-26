@@ -1,22 +1,29 @@
 seed: 42
 
 data:
-  granularity: weekly          # daily | weekly
+  source: data/combined_secondary_care_medicines.csv
+  engine: duckdb
+  granularity: monthly
+  period_col: YEAR_MONTH
+  organisation_col: ODS_CODE
+  medicine_col: VMP_SNOMED_CODE
+  product_name_col: VMP_PRODUCT_NAME
+  unit_id_col: UNIT_OF_MEASURE_IDENTIFIER
+  unit_name_col: UNIT_OF_MEASURE_NAME
+  quantity_col: TOTAL_QUANITY_IN_VMP_UNIT
+  cost_col: INDICATIVE_COST
   min_periods: 18
   min_nonzero: 6
   outlier_iqr_multiplier: 3.0
   winsorize_quantile: 0.99
-  quantity_col: Sheet          # column used as dispensed quantity
-  date_col: addeddate
-  medicine_col: name
-  type_filter: Drug            # keep only rows where type == Drug
-
-forecast:
-  horizon: 1
-  quantiles: [0.10, 0.50, 0.90]
   train_frac: 0.60
   val_frac: 0.20
   test_frac: 0.20
+
+forecast:
+  horizon: 1
+  seasonal_period: 12
+  quantiles: [0.10, 0.50, 0.90]
 
 reliability:
   window: 8
@@ -28,11 +35,13 @@ reliability:
   target_coverage: 0.90
 
 inventory:
-  init_stock_days: 30
-  reorder_point_days: 20
-  target_cover_days: 45
-  lead_time_days: [5, 6, 7]
+  granularity: monthly
+  init_stock_months: 1
+  reorder_point_months: 1
+  target_cover_months: 2
+  lead_time_months: [1, 2, 3]
   service_level: 0.95
+  outcomes_are_simulated: true
 
 radcsr:
   weights: {error: 0.30, bias: 0.30, coverage: 0.25, drift: 0.15}
@@ -44,7 +53,7 @@ radcsr:
 
 scenarios:
   surge_multiplier: [1.5, 2.0]
-  surge_duration: [2, 4]
+  surge_duration_months: [2, 4]
   drift_rate: [0.01, 0.03]
   volatility_multiplier: [2.0, 3.0]
   bias_offset_std: 1.0
