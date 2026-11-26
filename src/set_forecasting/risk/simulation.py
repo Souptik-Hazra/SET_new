@@ -55,7 +55,7 @@ def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
                 perturbations.append({"name": "forecast_bias", "start_index": 0, "forecast_multiplier": 1.2, "magnitude": .2})
             if name in ("S6_LeadTimeShock", "S7_Combined"):
                 lead_shock = 2
-                perturbations.append({"name": "lead_time_shock", "start_index": 0, "additional_months": 2, "magnitude": 2.0})
+                perturbations.append({"name": "lead_time_shock", "start_index": 0, "additional_months": 2})
             if name == "S8_Intermittent":
                 keep = rng.random(len(demand)) < .5
                 demand = np.where(keep, demand * 2.0, 0.0)
