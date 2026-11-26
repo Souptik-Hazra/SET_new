@@ -27,6 +27,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     per_series=pd.DataFrame(per_series)
     per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)
     outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())
+    outlier_summary=features.groupby(KEYS,as_index=False).agg(WINSOR_LIMIT_995=("WINSOR_LIMIT_995","first"),OUTLIER_COUNT=("OUTLIER_995_FLAG","sum"),N_PERIODS=("PERIOD","size"))
+    outlier_summary.to_csv(out/"tables/per_series_outlier_summary.csv",index=False)
     if pred.empty:raise RuntimeError("No validation/test predictions; check cohort size and chronological split.")
     reliability=build_reliability_index(pred)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
@@ -93,7 +95,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     test_scenarios=scenarios[scenarios.SPLIT=="test"]
     mean_rel=test_scenarios.groupby("SCENARIO_ID").R_REL.mean().to_dict()
     report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
-      "outlier_995_count":outlier_count,"prediction_rows":len(pred),"reliability_rows":len(reliability),
+      "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),"scenario_rows":len(scenarios),"ablation_rows":len(ablation_df),
       "inventory_rows":len(inventory),"risk_probability_rows":len(raw_probabilities),
       "calibrated_test_probability_rows":len(calibrated),
