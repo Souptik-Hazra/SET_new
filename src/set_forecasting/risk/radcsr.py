@@ -65,12 +65,13 @@ def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,
     adjusted = _tail(mu_eff, sigma_eff, availability)
     # Monotone risk uplift: reliability penalty adds non-negative log-survival
     # pressure, with exact equality to the unadjusted distribution at R_REL=0.
-    severity = (kappa_sigma * reliability +
-                kappa_mu * reliability * (availability < mu) +
-                kappa_l * reliability)
+    lead_ratio = lead_eff / np.maximum(np.asarray(lead_time, dtype=float), 1.0)
+    severity = (np.log1p(kappa_sigma * reliability) +
+                np.log1p(kappa_mu * reliability * (availability < mu)) +
+                np.log(np.maximum(lead_ratio, 1.0)))
     probability = baseline + (1.0 - baseline) * (1.0 - np.exp(-severity))
     # Keep adjusted distribution visible for audit; the reported risk is the
-    # monotone RADCSR envelope generated analytically, not a sampled max envelope.
+    # monotone RADCSR uplift uses the same capped effective-horizon ratio as the model.
     probability = np.clip(probability, 0.0, 1.0)
     raw = np.asarray(adjusted, dtype=float)
     return pd.DataFrame({
