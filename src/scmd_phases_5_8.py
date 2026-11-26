@@ -107,6 +107,7 @@ def paired_bootstrap_holm(df,n_boot=2000,seed=42,metric="INTERVAL_SCORE"):
 def run_phase5_to_8(output_root="output",processed_root="data/processed",seed=42,n_boot=2000):
     out=Path(output_root);proc=Path(processed_root);(out/"tables").mkdir(parents=True,exist_ok=True);proc.mkdir(parents=True,exist_ok=True)
     rel=pd.read_parquet(proc/"scmd_reliability.parquet")
+    if rel.empty: raise ValueError("No test predictions available; validate Phase 3 before running Phases 5-8")
     risk=adaptive_risk(rel);scen=simulate_scenarios(risk,seed);inv=inventory_simulation(scen)
     baselines=baseline_metrics(scen);stats=paired_bootstrap_holm(baselines,n_boot,seed)
     risk.to_parquet(proc/"scmd_adaptive_risk.parquet",index=False);scen.to_parquet(proc/"scmd_scenarios.parquet",index=False)

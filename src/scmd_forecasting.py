@@ -58,10 +58,8 @@ def run_forecasting(series_path="data/processed/scmd_monthly_series.parquet",out
     if len(test):
         if models:
             pred=[np.maximum(0,m.predict(test[cols])) for m in models]
-            lo,mid,hi=pred
-            # Quantile crossing is retained as a metric and corrected for operational intervals.
-            lo,mid,hi=np.minimum(lo,mid),np.maximum(mid,lo),np.maximum(hi,mid)
-            lo=np.minimum(lo,mid);hi=np.maximum(hi,mid)
+            # Sort quantiles row-wise to guarantee non-crossing operational intervals.
+            lo,mid,hi=np.sort(np.vstack(pred),axis=0)
         else:
             groups={k:g for k,g in feat.groupby(KEY,sort=False,dropna=False)}
             p=test.copy(); fallback=[]
