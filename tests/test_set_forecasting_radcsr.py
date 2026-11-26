@@ -219,5 +219,5 @@ def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
         rows.append(z)
     result = series_bootstrap_holm(pd.concat(rows), inventory, n_boot=100, seed=7)
     assert set(result.TEST) == {"paired_series_sign_flip"}
-    assert set(result.N_SERIES) == {1} or (result.N_SERIES >= 1).all()
+    assert (result.N_SERIES >= 2).all()
     assert result.HOLM_ADJUSTED_P.between(0, 1).all()
