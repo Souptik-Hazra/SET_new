@@ -300,3 +300,19 @@ def test_observed_inventory_loader_rejects_missing_provenance(tmp_path):
     pd.DataFrame({"ODS_CODE": ["ORG01"]}).to_csv(source, index=False)
     with pytest.raises(ValueError, match="missing columns"):
         load_observed_inventory(source)
+
+
+def test_calibration_metrics_exclude_censored_rows_and_report_metrics():
+    from src.set_forecasting.risk.simulation import calibration_metrics
+    x = sample(6).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    inventory = x[KEYS + ["PERIOD", "SCENARIO_ID"]].copy()
+    inventory["STOCKOUT_LABEL"] = [0, 1, 0, 1, np.nan, np.nan]
+    inventory["OUTCOME_TYPE"] = "SIMULATED"
+    probabilities = inventory[KEYS + ["PERIOD", "SCENARIO_ID"]].copy()
+    probabilities["METHOD"] = "RADCSR"
+    probabilities["SHORTAGE_PROBABILITY"] = [.1, .8, .2, .7, .5, .5]
+    result = calibration_metrics(probabilities, inventory, n_bins=5)
+    assert result.loc[0, "N"] == 4
+    assert 0 <= result.loc[0, "EXPECTED_CALIBRATION_ERROR"] <= 1
+    assert result.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
