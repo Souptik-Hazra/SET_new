@@ -45,28 +45,33 @@ def stats(a,lo,md,hi):
 
 def lead_time_validation():
  f=load("data/processed/forecasts.parquet"); s=load("data/processed/scmd_monthly_series.parquet")
- classes={}
+ classes={}; train_errors={}
  for key,g in s.groupby(KEYS,sort=False,dropna=False):
-  classes[tuple(key)]=demand_class(g.loc[g.SPLIT=="train","MODEL_DEMAND"])[0]
+  tr=g[g.SPLIT=="train"].sort_values("PERIOD")
+  classes[tuple(key)]=demand_class(tr["MODEL_DEMAND"])[0]
+  ytr=pd.to_numeric(tr["MODEL_DEMAND"],errors="coerce").to_numpy(float)
+  e=np.diff(ytr); train_errors[tuple(key)]=e[np.isfinite(e)]
  val=f[f.SPLIT=="validation"].copy(); val.PERIOD=pd.to_datetime(val.PERIOD)
  agg={c:{m:[[],[],[],[]] for m in ("normal","block_bootstrap")} for c in ("smooth","erratic","intermittent","lumpy")}
  counts={c:0 for c in agg}
  for key,g in val.groupby(KEYS,sort=False,dropna=False):
   g=g.sort_values("PERIOD").reset_index(drop=True); c=classes.get(tuple(key),"intermittent")
   y=g.MODEL_DEMAND.to_numpy(float); q10=g.Q10.to_numpy(float); q50=g.Q50.to_numpy(float); q90=g.Q90.to_numpy(float); err=y-q50
-  for t in range(6,len(g)):
+  for t in range(len(g)):
+   history=np.r_[train_errors.get(tuple(key),np.array([])),err[:t]]
+   if len(history)<2: continue
    for L in (1,2,3):
     if t+L>len(g): continue
     target=float(y[t:t+L].sum()); mu,sigma=infer_lead_time_distribution(q10[t],q50[t],q90[t],L)
     n=agg[c]["normal"]; n[0].append(target); n[1].append(max(0.,float(mu-1.2815515655*sigma))); n[2].append(float(mu)); n[3].append(float(mu+1.2815515655*sigma))
-    samples=block_bootstrap_lead_time_samples(q50[t:t+L],err[:t],L,n_boot=300,seed=19+t+L)
+    samples=block_bootstrap_lead_time_samples(q50[t:t+L],history,L,n_boot=300,seed=19+t+L)
     b=agg[c]["block_bootstrap"]; b[0].append(target); b[1].append(float(np.quantile(samples,.1))); b[2].append(float(np.quantile(samples,.5))); b[3].append(float(np.quantile(samples,.9)))
     counts[c]+=1
  out={}
  for c in agg:
   n=stats(*agg[c]["normal"]); b=stats(*agg[c]["block_bootstrap"])
   out[c]={"normal_approximation_baseline":n,"dependence_aware_block_bootstrap":b,"normal_adequate":n["adequate"],"block_bootstrap_adequate":b["adequate"],"evaluated_origin_horizons":counts[c]}
- return {"class_definition":"ADI/CV2 from train-only demand; ADI threshold 1.32, CV2 threshold 0.49.","bootstrap_method":"Circular moving blocks of forecast errors strictly before each validation origin; block length round(n_history^(1/3)); 300 simulations per origin/lead.","limitation":"Prequential validation diagnostic; six prior validation residuals are required. Not independent external validation.","by_demand_class":out}
+ return {"class_definition":"ADI/CV2 from train-only demand; ADI threshold 1.32, CV2 threshold 0.49.","bootstrap_method":"Circular moving blocks of historical one-step errors: train-period naive forecast errors (actual minus previous month) plus validation forecast errors strictly before each origin; block length round(n_history^(1/3)); 300 simulations per origin/lead.","limitation":"Train-period residuals are a naive one-step error proxy because the pipeline does not persist in-sample train forecasts. Validation residuals are added only after they become historical. This is a prequential diagnostic, not independent external validation.","by_demand_class":out}
 
 def probability_calibration():
  raw=load("data/processed/raw_risk_probabilities.parquet"); inv=load("data/processed/simulated_inventory.parquet")
