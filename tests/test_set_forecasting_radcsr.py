@@ -92,3 +92,28 @@ def test_end_to_end_small_cohort(tmp_path):
     assert report["inventory_rows"]>0
     assert report["ablation_rows"]>0
     assert (tmp_path/"output/tables/s5_bias_radcsr_vs_static_wasserstein.csv").exists()
+
+def test_probability_calibration_uses_validation_and_returns_test_only():
+    from src.set_forecasting.risk.simulation import calibrate_risk_probabilities
+    rows=[];labels=[]
+    for i in range(40):
+        split="validation" if i<32 else "test"
+        p=i/40
+        rows.append({**dict(zip(KEYS,["ORG","0001","U"])),"PERIOD":pd.Timestamp("2024-01-01")+pd.offsets.MonthBegin(i),
+            "SCENARIO_ID":"S1_Stable","SPLIT":split,"METHOD":"RADCSR","SHORTAGE_PROBABILITY":p})
+        labels.append({**dict(zip(KEYS,["ORG","0001","U"])),"PERIOD":pd.Timestamp("2024-01-01")+pd.offsets.MonthBegin(i),
+            "SCENARIO_ID":"S1_Stable","STOCKOUT_LABEL":int(i%2==0)})
+    out=calibrate_risk_probabilities(pd.DataFrame(rows),pd.DataFrame(labels),min_validation_rows=20)
+    assert set(out.SPLIT)=={"test"}
+    assert set(out.CALIBRATOR_STATUS)=={"isotonic_validation"}
+    assert out.SHORTAGE_PROBABILITY.between(0,1).all()
+
+def test_inventory_label_uses_realised_lead_time_demand():
+    x=sample(4)
+    x["Q10"]=1.;x["Q50"]=1.;x["Q90"]=1.
+    x["SCENARIO_ID"]="S1_Stable";x["SCENARIO_DEMAND"]=[10.,10.,0.,0.]
+    x["LEAD_TIME_MONTHS"]=2
+    inv=simulate_inventory(x,initial_cover=1.,target_cover=1.)
+    assert inv.loc[0,"LEAD_TIME_DEMAND"]==20.
+    assert inv.loc[0,"STOCKOUTS_ARE_OBSERVED"]==0
+    assert inv.loc[0,"STOCKOUT_LABEL"]==int(inv.loc[0,"LEAD_TIME_DEMAND"]>inv.loc[0,"AVAILABLE_STOCK"])
