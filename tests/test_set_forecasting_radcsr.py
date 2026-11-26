@@ -157,7 +157,7 @@ def test_radcsr_ablation_uses_configured_coefficients():
     x["Q10"] = 5.0
     x["Q50"] = 10.0
     x["Q90"] = 15.0
-    x["AVAILABLE_STOCK"] = 8.0
+    x["AVAILABLE_STOCK"] = 30.0
     x["LEAD_TIME_MONTHS"] = 2
     x["R_E"] = .2
     x["R_B"] = .4
