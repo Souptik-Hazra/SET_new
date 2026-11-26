@@ -36,8 +36,8 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
     cols=[c for c in FEATURES if c in features]+categorical
     for c in FEATURES:
         if c in features:features[c]=pd.to_numeric(features[c],errors="coerce")
-    train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=cols+["MODEL_DEMAND_WINSORIZED"])
-    val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=cols+[TARGET])
+    train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
+    val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=[ "MODEL_DEMAND_WINSORIZED"])
     test=features[(features.SPLIT=="test")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND"])
     models=[];status="naive_fallback"
     try:
@@ -48,7 +48,7 @@ def train_and_predict(series,min_train_rows=100,random_state=42):
                 m=LGBMRegressor(objective="quantile",alpha=q,n_estimators=800,learning_rate=.03,
                   num_leaves=31,min_child_samples=30,subsample=.85,colsample_bytree=.85,
                   verbosity=-1,random_state=random_state,n_jobs=-1)
-                m.fit(train[cols],train["MODEL_DEMAND_WINSORIZED"],categorical_feature=categorical,eval_set=[(val[cols],val[TARGET])],
+                m.fit(train[cols],train["MODEL_DEMAND_WINSORIZED"],categorical_feature=categorical,eval_set=[(val[cols],val["MODEL_DEMAND_WINSORIZED"])],
                   callbacks=[lgb.early_stopping(50,verbose=False)])
                 models.append(m)
             status="quantile_lightgbm"
