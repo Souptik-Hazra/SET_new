@@ -1,0 +1,22 @@
+# Local datasets
+/data/
+/SET PROJECT/
+/PharmacyTransactionalDataset/
+/output/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Temporary files
+*.log
+.DS_Store
