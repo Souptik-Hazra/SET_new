@@ -215,7 +215,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[3]
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
     if not output_root.is_absolute(): output_root = root / output_root
