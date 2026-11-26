@@ -453,3 +453,43 @@ def test_unreliability_score_has_explicit_direction_and_legacy_alias():
     result = build_reliability_index(x)
     assert "R_UNRELIABILITY" in result
     np.testing.assert_allclose(result.R_UNRELIABILITY, result.R_REL)
+
+
+
+def test_inventory_lead_time_label_respects_receipt_arrival_timing():
+    x = sample(4).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = [0.0, 10.0, 0.0, 0.0]
+    x["Q10"] = 20.0
+    x["Q50"] = 20.0
+    x["Q90"] = 20.0
+    x["LEAD_TIME_MONTHS"] = 2
+
+    inventory = simulate_inventory(
+        x, service_level=.95, initial_cover=0.0, target_cover=1.0
+    )
+
+    # An order placed at t=0 arrives at t=2. It cannot prevent the shortage
+    # at t=1 even though total horizon receipts exceed total horizon demand.
+    assert inventory.loc[0, "ORDER_PLACED"] == 20.0
+    assert inventory.loc[1, "PIPELINE_WITHIN_LEAD_TIME"] == 20.0
+    assert inventory.loc[1, "AVAILABLE_STOCK"] == 20.0
+    assert inventory.loc[1, "LEAD_TIME_DEMAND"] == 10.0
+    assert inventory.loc[1, "MONTHLY_STOCKOUT_LABEL"] == 1
+    assert inventory.loc[1, "STOCKOUT_LABEL"] == 1
+    assert inventory.loc[1, "LEAD_TIME_STOCKOUT_MONTHS"] == 1
+
+
+def test_inventory_rejects_missing_calendar_months():
+    import pytest
+
+    x = sample(4).copy()
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["SCENARIO_DEMAND"] = x.MODEL_DEMAND
+    x["Q10"] = 5.0
+    x["Q90"] = 15.0
+    x["LEAD_TIME_MONTHS"] = 2
+    x = x.drop(index=1).reset_index(drop=True)
+
+    with pytest.raises(ValueError, match="contiguous calendar months"):
+        simulate_inventory(x)
