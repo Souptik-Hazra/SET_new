@@ -1,18 +1,26 @@
 # SCMD full repository review remediation
 
-The SCMD workflow is the supported path:
-1. `python run_phase1_scmd.py`
-2. `python run_phase2_scmd.py`
-3. `python run_phase3_scmd.py`
-4. `python run_phase4_scmd.py`
-5. `python run_phase5_8_scmd.py`
+## Canonical execution path
 
-Phase 3 now uses one pooled/global quantile LightGBM model per quantile, rather than fitting three models for every individual series. If LightGBM is unavailable or the train/validation sample is too small, it writes a deterministic seasonal/last-observation fallback prediction set. The test split is evaluated as a rolling one-step-ahead stream: earlier test outcomes can inform later forecasts only after they would have become observable.
+There is one supported end-to-end command:
 
-Phase 4 defaults are read from `config/config.yaml` (90% target coverage, 8-month history). Calibration intervals are fixed before the current outcome is appended to the residual history.
+```bash
+python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicines.csv
+```
 
-Phase 5 risk radius is passed into Phase 6 replenishment targets. Bootstrap resampling is clustered by series after aggregating scenarios, and Holm-adjusted p-values and confidence intervals are exported.
+It performs Phase 1 ingestion and calls `src.set_forecasting.pipeline.run_model_pipeline()`. The runner prints the imported pipeline module path. If the processed monthly Parquet file already exists, `python run_phase5_8_scmd.py` reruns that same canonical model pipeline without repeating ingestion.
 
-**Data validity:** no clinical VEN or substitutability labels are inferred. The legacy medicine-level pipeline is disabled because its input schema is incompatible with SCMD. Inventory outcomes are SIMULATED. Stockout labels are not observed events.
+The former `src.scmd_phases_5_8` implementation is retired and retained only under `legacy/` with a deprecation notice. It is not an executable or CI path.
 
-The full dataset and all integration tests must still be run locally before research claims are made.
+## Existing implementation notes
+
+- Phase 3 uses pooled/global quantile LightGBM models per quantile. If LightGBM is unavailable or the train/validation sample is too small, a deterministic seasonal/last-observation fallback is used.
+- Phase 4 defaults are read from `config/config.yaml`; calibration intervals are fixed before the current outcome is appended to residual history.
+- Phase 5 reliability-adjusted risk feeds the inventory simulation. Bootstrap resampling is clustered by series and Holm-adjusted results are exported.
+- No clinical VEN or substitutability labels are inferred.
+
+## Scientific limitations
+
+**Inventory outcomes are SIMULATED. Stockout labels are not observed events.** SCMD contains no observed inventory or stockout outcomes. The legacy medicine-level pipeline is incompatible with the SCMD schema and must not be used for SCMD evaluation.
+
+Passing unit tests does not establish scientific superiority. Research claims require successful full-cohort execution, held-out calibration, identical-observation comparisons and appropriate statistical evidence.
