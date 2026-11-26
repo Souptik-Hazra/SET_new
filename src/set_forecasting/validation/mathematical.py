@@ -10,8 +10,8 @@ from ..reliability.index import build_reliability_index, KEYS
 
 DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
 FORMULAS = {
- "RADCSR_DISTRIBUTION_PROBABILITY": "1-Phi((A-mu_adj*L_eff/L)/(sigma_adj*sqrt(L_eff/L))); mu_adj=mu+I(A<mu)*mu*kappa_mu*R_rel; sigma_adj=sigma*(1+kappa_sigma*R_rel); L_eff=L*(1+kappa_l*R_rel), capped at horizon_cap*L.",
- "RADCSR_PROBABILITY": "p0+(1-p0)*(1-exp(-S)); p0=1-Phi((A-mu)/sigma); S=log(1+kappa_sigma*R_rel)+log(1+kappa_mu*R_rel*I(A<mu))+log(max(L_eff/L,1)). Risk-uplift score, not a distribution tail."
+ "RADCSR_DISTRIBUTION_PROBABILITY": "1-Phi((A-mu_eff)/sigma_eff). If A<mu_L: mu_adj=min(mu_L*(1+kappa_mu*R_rel),A); L_eff=min(L*(1+kappa_l*R_rel),horizon_cap*L); mu_eff=min(mu_adj*(L_eff/L),A); sigma_eff=sigma_L*(1+kappa_sigma*R_rel)*sqrt(L_eff/L). If A>=mu_L: mu_eff=mu_L; L_eff=L; sigma_eff=sigma_L*(1+kappa_sigma*R_rel). The mean shift and horizon extension are conditional on A<mu_L; both mean stages are capped at availability.",
+ "RADCSR_PROBABILITY": "p_adj+(0.5-p_adj)*(1-exp(-S)), where p_adj=RADCSR_DISTRIBUTION_PROBABILITY; S=log(1+kappa_sigma*R_rel)+I(A<mu_L)*(log(1+kappa_mu*R_rel)+log(L_eff/L)). This is a separate monotone uplift toward the 0.5 ceiling, not the adjusted-distribution tail. It requires validation calibration and held-out evaluation before any calibrated-probability interpretation."
 }
 ROOT = Path(__file__).resolve().parents[3]
 
