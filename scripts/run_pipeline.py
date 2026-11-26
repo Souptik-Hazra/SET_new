@@ -1,7 +1,7 @@
 """Run the full SETReliable SCMD and RADCSR pipeline."""
 import argparse
 from pathlib import Path
-from src.scmd_phase1 import run_phase1_from_csv
+from src.set_forecasting.data.ingestion import run_phase1_from_csv
 from src.set_forecasting.pipeline import run_model_pipeline
 
 def main():
