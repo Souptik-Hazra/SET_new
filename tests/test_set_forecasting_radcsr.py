@@ -49,7 +49,7 @@ def test_radcsr_monotone_probability_for_fixed_case():
       np.repeat(15.,len(r)),np.repeat(2.,len(r)),r)
     assert out.RADCSR_PROBABILITY.is_monotonic_increasing
     audit=monotonicity_audit(8,10,13,15,2)
-    assert audit["envelope_pass"]
+    assert audit["raw_pass"]\n    assert audit["gate_status"] == "PASS"
 
 def test_seven_scenarios_are_isolated_and_inventory_is_simulated():
     x=sample().tail(10).copy()
@@ -174,3 +174,50 @@ def test_scenario_generation_is_reproducible_and_includes_sparse_and_correlated_
     assert (sparse.SCENARIO_DEMAND == 0).any()
     correlated = first[first.SCENARIO_ID == "S9_CorrelatedSurge"]
     assert np.isfinite(correlated.SCENARIO_DEMAND).all()
+
+
+def test_radcsr_raw_probability_is_monotone_without_posthoc_envelope():
+    from src.set_forecasting.risk.radcsr import radcsr_probability
+    reliability = np.linspace(0.0, 1.0, 101)
+    out = radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, reliability)
+    assert out.RADCSR_RAW_PROBABILITY.is_monotonic_increasing
+    assert np.allclose(out.RADCSR_RAW_PROBABILITY, out.RADCSR_PROBABILITY)
+    assert "RADCSR_DISTRIBUTION_PROBABILITY" in out
+
+
+def test_radcsr_rejects_invalid_distribution_and_coefficients():
+    import pytest
+    with pytest.raises(ValueError, match="Q10"):
+        radcsr_probability(12.0, 10.0, 13.0, 15.0, 2.0, .5)
+    with pytest.raises(ValueError, match="non-negative"):
+        radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, .5, kappa_sigma=-.1)
+
+
+def test_clinical_ablation_is_not_fabricated_without_verified_mapping():
+    from src.set_forecasting.risk.radcsr import radcsr_ablations
+    x = sample().tail(4).copy()
+    x["Q10"] = 5.0; x["Q50"] = 10.0; x["Q90"] = 15.0
+    x["AVAILABLE_STOCK"] = 8.0; x["LEAD_TIME_MONTHS"] = 2
+    x["R_E"] = .2; x["R_B"] = .4; x["R_C"] = .6; x["R_D"] = .8; x["R_REL"] = .45
+    methods = set(radcsr_ablations(x).METHOD)
+    assert "RADCSR_noClinical" not in methods
+    assert "RADCSR" in methods
+
+
+def test_series_bootstrap_holm_uses_series_unit_and_reports_global_adjustment():
+    from src.set_forecasting.risk.simulation import series_bootstrap_holm
+    x = sample(12)
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["STOCKOUT_LABEL"] = (x.MODEL_DEMAND > 10).astype(int)
+    inventory = x[KEYS + ["PERIOD", "SCENARIO_ID", "STOCKOUT_LABEL"]].copy()
+    rows = []
+    for method, offset in [("RADCSR", 0.0), ("Static", .1), ("EWMA", .2)]:
+        p = np.clip(.2 + .04 * x.MODEL_DEMAND + offset, 0, 1)
+        z = x[KEYS + ["PERIOD", "SCENARIO_ID"]].copy()
+        z["METHOD"] = method
+        z["SHORTAGE_PROBABILITY"] = p
+        rows.append(z)
+    result = series_bootstrap_holm(pd.concat(rows), inventory, n_boot=100, seed=7)
+    assert set(result.TEST) == {"paired_series_sign_flip"}
+    assert set(result.N_SERIES) == {1} or (result.N_SERIES >= 1).all()
+    assert result.HOLM_ADJUSTED_P.between(0, 1).all()
