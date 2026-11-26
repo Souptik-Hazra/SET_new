@@ -26,7 +26,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         for b in corr.columns[i+1:]:
             value=float(corr.loc[a,b])
             if np.isfinite(value) and abs(value)>.70:high_corr.append({"signal_a":a,"signal_b":b,"correlation":value})
-    scenarios=make_scenarios(reliability,seed)
+    test_reliability=reliability[reliability.SPLIT=="test"].copy() if "SPLIT" in reliability else reliability.copy()\n    scenarios=make_scenarios(test_reliability,seed)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
         scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND)))
