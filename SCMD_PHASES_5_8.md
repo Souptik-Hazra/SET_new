@@ -32,7 +32,7 @@ These code-level checks do not establish external validity. All inventory, lead-
 ## Corrected simulation and score semantics
 
 - `LEAD_TIME_MONTHS` is now selected from `config/config.yaml` for each series, with the configured alternatives distributed deterministically across series. The lead-time shock adds two months to the selected base assumption.
-- Inventory lead-time demand covers periods `t` through `t + lead_time - 1`. A receipt due at `t + lead_time` is excluded because it arrives after that demand horizon.
+- - Inventory lead-time demand covers periods `t` through `t + lead - 1`. Lead-time stockout labels are path-dependent: a receipt only offsets demand at or after its arrival period, never demand from earlier months. Inventory simulation rejects missing or duplicate calendar months rather than silently compressing the lead-time clock.
 - Inventory sensitivity now varies base lead-time assumptions as well as service level and stock cover. Use `python scripts/run_inventory_sensitivity.py` to evaluate the configured grid.
 - Each scenario exports structured `PERTURBATIONS` metadata with the start index and parameters of every applied transformation. `SHIFT_MAGNITUDE` is a legacy scalar summary; consult `PERTURBATIONS` for exact units and values.
 - `R_UNRELIABILITY` is the canonical four-signal score. Higher values mean worse forecast reliability. `R_REL` remains as a compatibility alias for existing RADCSR interfaces.
