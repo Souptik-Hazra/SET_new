@@ -74,3 +74,21 @@ def test_risk_baseline_interface_returns_six_methods():
     p=risk_baseline_probabilities(frame)
     assert set(p.METHOD.unique())=={"Static","RollingQuantile","EWMA","ACI","MonteCarlo","WassersteinDRO"}
     assert p.SHORTAGE_PROBABILITY.between(0,1).all()
+
+def test_end_to_end_small_cohort(tmp_path):
+    from src.set_forecasting.pipeline import run_model_pipeline
+    frames=[]
+    for j in range(4):
+        x=sample(36)
+        x["ODS_CODE"]=f"ORG{j:02d}"
+        x["MODEL_DEMAND"]=x.MODEL_DEMAND*(j+1)
+        frames.append(x)
+    series=pd.concat(frames,ignore_index=True)
+    source=tmp_path/"series.parquet"
+    series.to_parquet(source,index=False)
+    report=run_model_pipeline(series_path=str(source),output_dir=str(tmp_path/"output"),
+        processed_dir=str(tmp_path/"processed"),n_boot=100)
+    assert report["prediction_rows"]>0
+    assert report["inventory_rows"]>0
+    assert report["ablation_rows"]>0
+    assert (tmp_path/"output/tables/s5_bias_radcsr_vs_static_wasserstein.csv").exists()
