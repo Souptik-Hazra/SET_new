@@ -10,7 +10,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from .source import get_scmd_path, validate_scmd_header
+from .source import get_project_root, get_scmd_path, validate_scmd_header
 
 logger = logging.getLogger(__name__)
 KEY = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
@@ -215,7 +215,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20):
-    root = Path(__file__).resolve().parents[3]
+    root = get_project_root()
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
     if not output_root.is_absolute(): output_root = root / output_root
