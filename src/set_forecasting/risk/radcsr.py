@@ -190,7 +190,6 @@ def block_bootstrap_lead_time_samples(q50_path, residual_history, lead, n_boot=5
     if len(errors) < 2 or np.any(~np.isfinite(errors)) or np.any(~np.isfinite(forecasts)):
         raise ValueError("At least two finite historical residuals and finite forecasts are required")
     lead = int(lead)
-    errors = errors - float(np.mean(errors))
     if block_length is None:
         block_length = max(1, int(round(len(errors) ** (1.0 / 3.0))))
     block_length = min(max(1, int(block_length)), len(errors))
