@@ -1,8 +1,6 @@
 """Single orchestrator for SCMD → quantile forecasting → RADCSR → calibrated risk."""
 import json
-import os
 import platform
-import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -64,10 +62,9 @@ def _stamp_output_csvs(output_dir):
 
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
-    if sys.version_info[:2] != (3, 11) and os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON") != "1":
+    if platform.python_version_tuple()[:2] != ("3", "13"):
         raise RuntimeError(
-            f"Unsupported Python {platform.python_version()}; research pipeline requires Python 3.11.x. "
-            "Set SET_ALLOW_UNSUPPORTED_PYTHON=1 only for an explicitly non-reproducible compatibility run."
+            f"Unsupported Python {platform.python_version()}; research pipeline requires Python 3.13.x."
         )
     root = get_project_root()
     def project_path(value):
@@ -356,8 +353,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             "higher_unreliability_severity":bool(value>=stable_unreliability)}
     _stamp_output_csvs(out)
     report={"runtime":{"python_version":platform.python_version(),
-        "python_supported":platform.python_version().startswith("3.11."),
-        "python_override":os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON")=="1"},
+        "python_supported":platform.python_version_tuple()[:2] == ("3", "13"),
+        "python_override":False},
       "DATA_TYPE":"MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES",
       "observed_demand_disclaimer":OBSERVED_DEMAND_DISCLAIMER,
       "simulated_outcomes_disclaimer":DISCLAIMER,
