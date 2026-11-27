@@ -67,7 +67,7 @@ MATH_ARTIFACTS = (
 
 
 def assert_supported_python() -> dict:
-    """Require the repository's configured Python 3.13 runtime."""
+    """Require the repository's configured Python 3.13.18 runtime."""
     actual = (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
     if actual != (3, 13, 18):
         raise RuntimeError(
