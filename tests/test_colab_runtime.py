@@ -181,7 +181,7 @@ def test_require_stage_rejects_missing_or_stale_upstream_checkpoint(tmp_path, mo
 
 
 
-def test_unsupported_python_is_rejected_unless_explicitly_overridden(monkeypatch):
+def test_python_313_is_required(monkeypatch):
     from types import SimpleNamespace
     import pytest
 
@@ -190,14 +190,16 @@ def test_unsupported_python_is_rejected_unless_explicitly_overridden(monkeypatch
         SimpleNamespace(major=3, minor=12),
     )
     monkeypatch.delenv("SET_ALLOW_UNSUPPORTED_PYTHON", raising=False)
-    with pytest.raises(RuntimeError, match="requires Python 3.11.x"):
+    with pytest.raises(RuntimeError, match="requires Python 3.13.x"):
         colab_runtime.assert_supported_python()
 
-    monkeypatch.setenv("SET_ALLOW_UNSUPPORTED_PYTHON", "1")
-    with pytest.warns(RuntimeWarning, match="numerical reproducibility is not guaranteed"):
-        result = colab_runtime.assert_supported_python()
-    assert result["python_supported"] is False
-    assert result["python_override"] is True
+    monkeypatch.setattr(
+        colab_runtime.sys, "version_info",
+        SimpleNamespace(major=3, minor=13),
+    )
+    result = colab_runtime.assert_supported_python()
+    assert result["python_supported"] is True
+    assert result["python_override"] is False
 
 
 
