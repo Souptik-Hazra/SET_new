@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 import pandas as pd
 import pytest
@@ -5,6 +6,8 @@ from src.features import create_features,leakage_check
 from src.scmd_reliability import calibrate_intervals
 from legacy.scmd_phases_5_8 import adaptive_risk,simulate_scenarios,inventory_simulation,baseline_metrics,paired_bootstrap_holm
 from src.inventory.simulator import assign_ven_classes
+
+pytestmark = pytest.mark.legacy
 
 K=["ODS_CODE","VMP_SNOMED_CODE","UNIT_OF_MEASURE_IDENTIFIER"]
 def sample(n=24):
