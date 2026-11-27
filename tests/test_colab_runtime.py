@@ -137,9 +137,9 @@ def test_fingerprint_changes_when_stage_code_changes(tmp_path, monkeypatch):
     source = tmp_path / "input.csv"
     config = tmp_path / "config" / "config.yaml"
     code = tmp_path / "src" / "module.py"
-    source.parent.mkdir(parents=True)
-    config.parent.mkdir(parents=True)
-    code.parent.mkdir(parents=True)
+    source.parent.mkdir(parents=True, exist_ok=True)
+    config.parent.mkdir(parents=True, exist_ok=True)
+    code.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("source", encoding="utf-8")
     config.write_text("seed: 42", encoding="utf-8")
     code.write_text("VALUE = 1", encoding="utf-8")
