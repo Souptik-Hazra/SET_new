@@ -16,14 +16,17 @@ def _stable_seed(seed, key):
 
 def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
     """Create reproducible, series-isolated synthetic stress streams."""
-    required = KEYS + ["PERIOD", "MODEL_DEMAND", "Q10", "Q50", "Q90"]
+    demand_column = "SCENARIO_BASE_DEMAND" if "SCENARIO_BASE_DEMAND" in predictions else "MODEL_DEMAND"
+    required = KEYS + ["PERIOD", "Q10", "Q50", "Q90", demand_column]
     missing = set(required) - set(predictions.columns)
     if missing:
         raise ValueError(f"Missing scenario inputs: {sorted(missing)}")
     if predictions.duplicated(KEYS + ["PERIOD"]).any():
         raise ValueError("Scenario input must have one row per series and period")
     if predictions[required].isna().any().any():
-        raise ValueError("Scenario inputs must not contain null keys, periods, demand or quantiles")
+        raise ValueError("Scenario inputs must have numeric simulation demand and quantiles; use Q50 explicitly for missing-month simulation demand")
+    if not np.isfinite(pd.to_numeric(predictions[demand_column], errors="coerce")).all():
+        raise ValueError("Scenario simulation demand must be finite")
     raw_lead_times = tuple(lead_times)
     if not raw_lead_times or any(not np.isfinite(float(value)) or float(value) < 1 or not float(value).is_integer() for value in raw_lead_times):
         raise ValueError("lead_times must contain positive whole-month values")
@@ -31,7 +34,12 @@ def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
     frames = []
     for key, group in predictions.groupby(KEYS, sort=False, dropna=False):
         group = group.sort_values("PERIOD").copy()
-        base = np.maximum(group.MODEL_DEMAND.to_numpy(float), 0)
+        base = np.maximum(group[demand_column].to_numpy(float), 0)
+        imputed = (
+            group["DEMAND_IMPUTED_FOR_SIMULATION"].fillna(False).astype(bool).to_numpy()
+            if "DEMAND_IMPUTED_FOR_SIMULATION" in group
+            else group.get("OBSERVATION_MISSING", pd.Series(False, index=group.index)).fillna(False).astype(bool).to_numpy()
+        )
         start = len(base) // 3
         duration = max(1, len(base) // 3)
         for name in SCENARIOS:
@@ -72,6 +80,7 @@ def make_scenarios(predictions, seed=42, lead_times=(1, 2, 3)):
             lead = np.full(len(x), base_lead + lead_shock, dtype=int)
             x["SCENARIO_ID"] = name
             x["SCENARIO_DEMAND"] = demand
+            x["DEMAND_IMPUTED_FOR_SIMULATION"] = imputed
             x["LEAD_TIME_BASE_MONTHS"] = base_lead
             x["LEAD_TIME_SHOCK_MONTHS"] = lead_shock
             x["LEAD_TIME_MONTHS"] = lead
