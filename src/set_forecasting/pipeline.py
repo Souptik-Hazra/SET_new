@@ -123,16 +123,36 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     per_series=[]
     for key,g in test_pred.groupby(KEYS,sort=False,dropna=False):
         y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)
-        per_series.append(dict(zip(KEYS,key),N_TEST=len(g),
-            WAPE=float(np.abs(y-q).sum()/max(np.abs(y).sum(),1e-9)*100),
-            MAE=float(np.mean(np.abs(y-q)))))
+        valid=np.isfinite(y)&np.isfinite(q)
+        y_valid=y[valid];q_valid=q[valid]
+        per_series.append(dict(zip(KEYS,key),N_TEST=int(valid.sum()),
+            WAPE=float(np.abs(y_valid-q_valid).sum()/max(np.abs(y_valid).sum(),1e-9)*100) if valid.any() else np.nan,
+            MAE=float(np.mean(np.abs(y_valid-q_valid))) if valid.any() else np.nan))
     per_series=pd.DataFrame(per_series)
     per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)
     outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())
     outlier_summary=features.groupby(KEYS,as_index=False).agg(WINSOR_LIMIT_995=("WINSOR_LIMIT_995","first"),OUTLIER_COUNT=("OUTLIER_995_FLAG","sum"),N_PERIODS=("PERIOD","size"))
     outlier_summary.to_csv(out/"tables/per_series_outlier_summary.csv",index=False)
     if pred.empty:raise RuntimeError("No validation/test predictions; check cohort size and chronological split.")
-    reliability=build_reliability_index(pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights"))
+    observed_pred = pred[~pred.get("OBSERVATION_MISSING", pd.Series(False, index=pred.index)).fillna(True).astype(bool)].copy()
+    reliability_observed = build_reliability_index(
+        observed_pred, target_coverage=float(rel_cfg.get("target_coverage",.90)),
+        window=int(rel_cfg.get("window",8)), weights=rel_cfg.get("weights")
+    )
+    reliability_columns = [
+        column for column in reliability_observed.columns
+        if column not in pred.columns and column not in KEYS + ["PERIOD"]
+    ]
+    reliability = pred.merge(
+        reliability_observed[KEYS + ["PERIOD"] + reliability_columns],
+        on=KEYS + ["PERIOD"], how="left", validate="one_to_one"
+    )
+    if reliability_columns:
+        reliability = reliability.sort_values(KEYS + ["PERIOD"]).copy()
+        for column in reliability_columns:
+            reliability[column] = reliability.groupby(KEYS, sort=False, dropna=False)[column].ffill()
+            if column in {"R_E", "R_B", "R_B_SYMMETRIC", "R_B_OVER", "R_B_UNDER", "R_C", "R_D", "R_UNRELIABILITY", "R_REL", "SHIFT_DETECTOR_FLAG"}:
+                reliability[column] = reliability[column].fillna(0)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
     intervals=interval_baselines(pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
     interval_test=intervals[intervals.SPLIT=="test"] if "SPLIT" in intervals else intervals
@@ -146,7 +166,17 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             if np.isfinite(value) and abs(value)>.70:high_corr.append({"signal_a":a,"signal_b":b,"correlation":value})
     # Generate validation and test scenarios together so test reliability has a validation warm-up.
     configured_lead_times = tuple(inv_cfg.get("lead_time_months", [1, 2, 3]))
-    scenarios=make_scenarios(reliability,seed,lead_times=configured_lead_times)
+    scenario_input = reliability.copy()
+    missing_for_simulation = scenario_input.get(
+        "OBSERVATION_MISSING", pd.Series(False, index=scenario_input.index)
+    ).fillna(True).astype(bool)
+    # Missing actual demand is never rewritten in MODEL_DEMAND. For the synthetic
+    # inventory stream only, use the forecast median and explicitly flag imputation.
+    scenario_input["SCENARIO_BASE_DEMAND"] = scenario_input.MODEL_DEMAND.where(
+        ~missing_for_simulation, scenario_input.Q50
+    )
+    scenario_input["DEMAND_IMPUTED_FOR_SIMULATION"] = missing_for_simulation
+    scenarios=make_scenarios(scenario_input,seed,lead_times=configured_lead_times)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
         scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights")))
