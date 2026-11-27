@@ -2,6 +2,7 @@
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -27,6 +28,11 @@ def _stamp_output_csvs(output_dir):
 
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
+    if sys.version_info[:2] != (3, 11) and os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON") != "1":
+        raise RuntimeError(
+            f"Unsupported Python {platform.python_version()}; research pipeline requires Python 3.11.x. "
+            "Set SET_ALLOW_UNSUPPORTED_PYTHON=1 only for an explicitly non-reproducible compatibility run."
+        )
     root = get_project_root()
     def project_path(value):
         path = Path(value)
@@ -93,12 +99,23 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     provenance["FORECAST_SHARE"] = provenance.FORECAST_OBSERVATIONS / max(total_forecasts, 1)
     provenance["IS_FALLBACK"] = provenance.FORECAST_MODEL.eq("naive_fallback")
     provenance.to_csv(out/"tables/forecast_provenance.csv", index=False)
+    source_summary = pred.groupby("FORECAST_MODEL", as_index=False).size().rename(
+        columns={"size": "FORECAST_OBSERVATIONS"}
+    ) if not pred.empty else pd.DataFrame(columns=["FORECAST_MODEL", "FORECAST_OBSERVATIONS"])
+    source_summary["FORECAST_OBSERVATION_SHARE"] = (
+        source_summary.FORECAST_OBSERVATIONS / max(total_forecasts, 1)
+    )
+    source_summary.to_csv(out/"tables/forecast_source_summary.csv", index=False)
     fallback_observations = int(provenance.loc[provenance.IS_FALLBACK, "FORECAST_OBSERVATIONS"].sum()) if len(provenance) else 0
     forecast_report.update({
         "forecast_observations": total_forecasts,
         "fallback_observations": fallback_observations,
         "fallback_observation_share": float(fallback_observations / total_forecasts) if total_forecasts else None,
         "forecast_sources": provenance.FORECAST_MODEL.value_counts().to_dict() if len(provenance) else {},
+        "forecast_source_observation_share": dict(zip(
+            source_summary.FORECAST_MODEL,
+            source_summary.FORECAST_OBSERVATION_SHARE
+        )),
     })
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
