@@ -51,7 +51,7 @@ def test_notebook_imports_the_runtime_and_uses_all_stage_entrypoints():
 def test_notebook_branch_and_dataset_paths_match_repository_contract():
     notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
     assert 'BRANCH = "feature/colab-pipeline-execution"' in notebook_source
-    assert 'DEFAULT_NOTEBOOK_COMMIT = "1a93d377c121898dee5585eb45997e9f84cdeb43"' in notebook_source
+    assert 'DEFAULT_NOTEBOOK_COMMIT = "268a970988e65698c3e2392680bb5f99d9bbc67d"' in notebook_source
     assert 'git", "checkout", NOTEBOOK_COMMIT' in notebook_source
     assert "WARNING: NOTEBOOK_COMMIT override active" in notebook_source
     assert 'REPO_DIR = Path("/content/SET_new")' in notebook_source
