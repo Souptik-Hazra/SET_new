@@ -137,7 +137,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         indexed["SOURCE_RECORDS"] = indexed["SOURCE_RECORDS"].fillna(0).astype("int64")
         for col in numeric[1:]:
             indexed[col] = indexed[col].fillna(0.0)
-        indexed["MODEL_DEMAND"] = indexed["POSITIVE_QUANTITY"]
+        indexed["MODEL_DEMAND"] = indexed["POSITIVE_QUANTITY"].where(~indexed["OBSERVATION_MISSING"])
         indexed["DEMAND_NET"] = indexed["NET_QUANTITY"]
         indexed["VMP_PRODUCT_NAME"] = indexed["VMP_PRODUCT_NAME"].ffill().bfill()
         indexed["UNIT_OF_MEASURE_NAME"] = indexed["UNIT_OF_MEASURE_NAME"].ffill().bfill()
@@ -273,7 +273,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         "disclaimer": DISCLAIMER,
         "note": (
             "Missing month rows are flagged, not silently interpreted as observed zero demand. "
-            "Model demand currently uses positive quantity; net and negative movements remain "
+            "MODEL_DEMAND is NaN for unobserved months; net and negative movements remain "
             "available separately. The final persisted Parquet contains the retained cohort "
             "and chronological SPLIT assignments."
         ),
