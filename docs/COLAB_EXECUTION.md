@@ -18,7 +18,9 @@ The raw CSV is copied from Drive to Colab local storage for the ingestion run. R
 
 ## Checkpoint behavior
 
-The helper in `scripts/colab_runtime.py` records a stage manifest only after all declared outputs exist. A checkpoint is reused only if the fingerprint matches the Git revision, source metadata, configuration hash and stage parameters, and all required artifacts are present.
+The helper in `scripts/colab_runtime.py` records a stage manifest only after all declared outputs exist. A checkpoint is reused only if its fingerprint matches source metadata, hashes of the stage's relevant Python files, configuration and stage parameters, and all required artifacts are present. The Git revision is recorded for audit but documentation-only commits do not invalidate compute checkpoints.
+
+The notebook requires a valid ingestion checkpoint before model execution and a valid model checkpoint before mathematical validation. A downstream stage cannot run merely because old output files happen to exist.
 
 The initial workflow has three checkpoint boundaries:
 
