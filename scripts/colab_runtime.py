@@ -140,6 +140,7 @@ def run_stage(
     action: Callable[[], object],
     *,
     force: bool = False,
+    invalidate_stages: tuple[str, ...] = (),
 ):
     """Run one stage and mark it complete only after all expected outputs exist."""
     if not force and stage_is_complete(stage, fingerprint, artifacts):
@@ -150,7 +151,10 @@ def run_stage(
     # rerun fails, stale outputs must not make the old checkpoint reusable.
     manifest = _read_manifest()
     manifest.setdefault("version", 1)
-    manifest.setdefault("stages", {}).pop(stage, None)
+    stages = manifest.setdefault("stages", {})
+    stages.pop(stage, None)
+    for downstream_stage in invalidate_stages:
+        stages.pop(downstream_stage, None)
     _write_manifest(manifest)
 
     print(f"[STAGE START] {stage}")
@@ -193,6 +197,7 @@ def run_ingestion(
             load_series=False,
         ),
         force=force,
+        invalidate_stages=("model_pipeline", "mathematical_validation"),
     )
 
 
@@ -216,6 +221,7 @@ def run_models(*, bootstrap: int = 2000, seed: int | None = None, force: bool = 
         "model_pipeline", fingerprint, MODEL_ARTIFACTS,
         lambda: run_model_pipeline(n_boot=bootstrap, seed=seed),
         force=force,
+        invalidate_stages=("mathematical_validation",),
     )
 
 
