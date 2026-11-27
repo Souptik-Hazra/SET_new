@@ -8,7 +8,7 @@ from .data.source import get_project_root
 from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
-from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
+from .risk.radcsr import radcsr_probability,radcsr_ablations,KEYS,DISCLAIMER
 from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
@@ -123,8 +123,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g,
-            kappa_sigma=float(risk_cfg.get("kappa_sigma",.75)),
-            kappa_mu=float(risk_cfg.get("kappa_mu",.50)),
+            kappa_sigma=radcsr_ks,
+            kappa_mu=radcsr_km,
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0),
             weights=rel_cfg.get("weights")).reset_index(drop=True)
@@ -181,26 +181,40 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),
             "evaluated_medicines":len(evaluated_codes),"mapping_coverage":1.0,
             "ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}
-    test_joined=joined[joined.SPLIT=="test"]
-    if test_joined.empty:
-        raise RuntimeError("No held-out test rows available for RADCSR monotonicity acceptance gate.")
-    mono_cfg = dict(ks=float(risk_cfg.get("kappa_sigma", .75)),
-                    km=float(risk_cfg.get("kappa_mu", .50)),
-                    kl=float(risk_cfg.get("kappa_l", 1.5)),
-                    horizon_cap=risk_cfg.get("horizon_cap", 2.0))
-    audit_rows=[]
-    audit_sample=test_joined.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False).head(1)
-    for row in audit_sample.itertuples():
-        audit_rows.append(monotonicity_audit(float(row.Q10),float(row.Q50),float(row.Q90),
-            float(row.AVAILABLE_STOCK),float(row.LEAD_TIME_MONTHS),**mono_cfg))
-    mono_pass=all(item["raw_pass"] for item in audit_rows)
-    mono={"gate_status":"PASS" if mono_pass else "FAIL",
-          "cases_checked":len(audit_rows),"all_raw_curves_monotone":mono_pass,
-          "method":"analytic_monotone_risk_uplift_no_posthoc_envelope",
-          "cases":[{k:v for k,v in item.items() if k!="probability_curve"} for item in audit_rows]}
-    (out/"radcsr_monotonicity_audit.json").write_text(json.dumps(mono,indent=2))
-    if not mono_pass:
-        raise RuntimeError("RADCSR monotonicity acceptance gate failed; refusing to publish research outputs.")
+    from .validation.empirical_monotonicity import audit_frame
+    empirical_audit = audit_frame(
+        joined,
+        kappa_sigma=radcsr_ks,
+        kappa_mu=radcsr_km,
+        kappa_l=float(risk_cfg.get("kappa_l", 1.5)),
+        horizon_cap=risk_cfg.get("horizon_cap", 2.0),
+    )
+    (out/"empirical_monotonicity_audit.json").write_text(
+        json.dumps(empirical_audit, indent=2, default=str), encoding="utf-8"
+    )
+    mono = {
+        "gate_status": empirical_audit["status"],
+        "cases_checked": empirical_audit["total_test_observations"],
+        "all_raw_curves_monotone": empirical_audit["status"] == "PASS",
+        "distribution_pass": empirical_audit["distribution_pass"],
+        "distribution_fail": empirical_audit["distribution_fail"],
+        "radcsr_pass": empirical_audit["radcsr_pass"],
+        "radcsr_fail": empirical_audit["radcsr_fail"],
+        "low_availability_observations": empirical_audit["low_availability_observations"],
+        "low_availability_failures": empirical_audit["low_availability_failures"],
+        "per_scenario": empirical_audit["per_scenario"],
+        "violating_observation_keys": empirical_audit["violating_observation_keys"],
+        "method": empirical_audit["method"],
+    }
+    (out/"radcsr_monotonicity_audit.json").write_text(
+        json.dumps(mono, indent=2, default=str), encoding="utf-8"
+    )
+    if empirical_audit["status"] != "PASS":
+        raise RuntimeError(
+            "Full-cohort RADCSR empirical monotonicity gate failed; "
+            f"low_availability_failures={empirical_audit['low_availability_failures']}. "
+            "See output/empirical_monotonicity_audit.json."
+        )
     test_scenarios=scenarios[scenarios.SPLIT=="test"]
     mean_unreliability=test_scenarios.groupby("SCENARIO_ID").R_UNRELIABILITY.mean().to_dict()
     mean_risk=rad_df[rad_df.SPLIT=="test"].groupby("SCENARIO_ID").RADCSR_PROBABILITY.mean().to_dict()
