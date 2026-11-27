@@ -39,6 +39,7 @@ MODEL_ARTIFACTS = (
     "data/processed/radcsr_risk_details.parquet",
     "output/pipeline_report.json",
     "output/tables/forecast_provenance.csv",
+    "output/tables/forecast_source_summary.csv",
     "output/tables/observation_counts.csv",
     "output/tables/bootstrap_observation_counts.csv",
     "output/final_verdict.md",
