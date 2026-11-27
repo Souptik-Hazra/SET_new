@@ -41,7 +41,15 @@ Place the source CSV under `data/raw/` (do not commit it), then run from the rep
 python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicines.csv
 ```
 
-This is the single documented end-to-end command. It performs Phase 1 ingestion and then calls `src.set_forecasting.pipeline.run_model_pipeline()`. The runner prints `PIPELINE_ENTRYPOINT=src.set_forecasting.pipeline.run_model_pipeline` as an execution trace. Generated intermediates go under `data/processed/`; reports and tables go under `output/`.
+This is the single documented end-to-end command. It performs Phase 1 ingestion and then calls `src.set_forecasting.pipeline.run_model_pipeline()`. The runner prints `PIPELINE_ENTRYPOINT=src.set_forecasting.pipeline.run_model_pipeline` as an execution trace. Generated intermediates go under `data/processed/`; reports and tables go under `output/`. The pipeline also performs a full held-out test-observation monotonicity audit for both RADCSR probability curves and stops if any observation fails; see `output/empirical_monotonicity_audit.json`.
+To rerun the empirical audit independently against the saved real test split (not a synthetic fixture):
+
+```bash
+python -m src.set_forecasting.validation.empirical_monotonicity
+```
+
+The audit reports total observations, both probability-curve pass/fail counts, scenario-level counts, low-availability failures and violating observation keys in `output/empirical_monotonicity_audit.json`. All inventory and stockout outcomes remain simulated.
+
 
 To rerun only the model pipeline after the processed monthly Parquet file already exists:
 
