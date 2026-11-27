@@ -22,6 +22,10 @@ The project does not claim to detect observed hospital stockouts. Statistical co
 
 See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). New implementation code belongs in `src/set_forecasting/`. Root-level compatibility wrappers are retained only for migration support. The older pharmacy-schema implementation is historical; the SCMD pipeline does not import it.
 
+## Google Colab
+
+A resumable Colab execution notebook is available at [`notebooks/SET_Pharma_Colab_Pipeline.ipynb`](notebooks/SET_Pharma_Colab_Pipeline.ipynb). See [Colab execution instructions](docs/COLAB_EXECUTION.md) for Drive setup, checkpoints and recovery behavior. The notebook calls the existing Python package; it does not duplicate research logic.
+
 ## Setup
 
 Python 3.11 is the supported environment.
