@@ -287,4 +287,7 @@ def run():
  print("Reports: output/mathematical_validation.md and output/mathematical_validation.json")
  return result
 
-if __name__=="__main__": run()
+if __name__=="__main__":
+ result=run()
+ if result.get("status") != "PASS":
+  raise SystemExit(1)
