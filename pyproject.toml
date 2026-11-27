@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "setreliable-scmd"
 version = "0.1.0"
 description = "SCMD demand forecasting and RADCSR reliability-adaptive shortage risk research"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.13,<3.14"
 dependencies = [
   "numpy>=1.26",
   "pandas>=2.2,<3.0",
