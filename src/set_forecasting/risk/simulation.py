@@ -6,6 +6,7 @@ import pandas as pd
 from scipy.stats import norm
 from .radcsr import KEYS,infer_lead_time_distribution
 SCENARIOS=["S1_Stable","S2_Surge","S3_Drift","S4_Volatility","S5_Bias","S6_LeadTimeShock","S7_Combined","S8_Intermittent","S9_CorrelatedSurge"]
+PRIMARY_RISK_METHODS=("RADCSR","Static","RollingQuantile","EWMA","ACI","MonteCarlo","WassersteinDRO")
 
 def _stable_seed(seed, key):
     token = "|".join(map(str, key)).encode("utf-8")
@@ -246,8 +247,60 @@ def risk_baseline_probabilities(frame, seed=42):
             ids=[g.iloc[i][k] for k in KEYS+["PERIOD","SCENARIO_ID"]]
             for name,p in {"Static":p_static,"RollingQuantile":p_roll,"EWMA":p_ewma,
                            "ACI":p_aci,"MonteCarlo":p_mc,"WassersteinDRO":p_dro}.items():
-                rec=dict(zip(KEYS+["PERIOD","SCENARIO_ID"],ids));rec.update(METHOD=name,SHORTAGE_PROBABILITY=float(np.clip(p,0,1)),SPLIT=g.iloc[i].get("SPLIT","test"));rows.append(rec)
+                rec=dict(zip(KEYS+["PERIOD","SCENARIO_ID"],ids));rec.update(METHOD=name,SHORTAGE_PROBABILITY=float(np.clip(p,0,1)),SPLIT=g.iloc[i].get("SPLIT","test"),FORECAST_MODEL=g.iloc[i].get("FORECAST_MODEL","unknown"),OUTCOME_TYPE="SIMULATED",STOCKOUTS_ARE_OBSERVED=0);rows.append(rec)
     return pd.DataFrame(rows)
+
+def align_primary_method_observations(probabilities, methods=PRIMARY_RISK_METHODS):
+    """Return paired primary-method rows on an explicit per-scenario key intersection.
+
+    Duplicate method/key rows and missing primary methods fail loudly. The returned
+    report records input, aligned and dropped key counts for every scenario/method.
+    """
+    keys = KEYS + ["PERIOD", "SCENARIO_ID"]
+    required = set(keys + ["METHOD", "SHORTAGE_PROBABILITY"])
+    missing = required - set(probabilities.columns)
+    if missing:
+        raise ValueError(f"Primary probability table is missing columns: {sorted(missing)}")
+    primary = probabilities[probabilities.METHOD.isin(methods)].copy()
+    duplicate_columns = keys + ["METHOD"]
+    duplicated = primary.duplicated(duplicate_columns, keep=False)
+    if duplicated.any():
+        sample = primary.loc[duplicated, duplicate_columns].head(5).to_dict("records")
+        raise ValueError(f"Duplicate primary method/evaluation keys detected: {sample}")
+    scenarios = sorted(primary.SCENARIO_ID.dropna().unique().tolist())
+    aligned_frames = []
+    report_rows = []
+    for scenario in scenarios:
+        group = primary[primary.SCENARIO_ID == scenario]
+        key_sets = {}
+        for method in methods:
+            method_rows = group[group.METHOD == method]
+            if method_rows.empty:
+                raise ValueError(f"Primary method {method!r} has no rows in scenario {scenario!r}")
+            key_sets[method] = set(map(tuple, method_rows[keys].itertuples(index=False, name=None)))
+        common = set.intersection(*(key_sets[method] for method in methods))
+        if not common:
+            raise ValueError(f"No common evaluation keys across primary methods in scenario {scenario!r}")
+        for method in methods:
+            method_rows = group[group.METHOD == method]
+            mask = method_rows[keys].apply(tuple, axis=1).isin(common)
+            aligned = method_rows.loc[mask].copy()
+            aligned_frames.append(aligned)
+            report_rows.append({
+                "SCENARIO_ID": scenario,
+                "METHOD": method,
+                "INPUT_KEYS": len(key_sets[method]),
+                "ALIGNED_KEYS": len(common),
+                "DROPPED_KEYS": len(key_sets[method] - common),
+                "MISMATCH_KEYS": len(key_sets[method] - common),
+                "OUTCOME_TYPE": "SIMULATED",
+                "DISCLAIMER": "Inventory outcomes are SIMULATED. Stockout labels are not observed events.",
+            })
+    if not aligned_frames:
+        raise ValueError("No primary risk method observations were available")
+    aligned = pd.concat(aligned_frames, ignore_index=True)
+    return aligned, pd.DataFrame(report_rows)
+
 
 def brier_by_method(probabilities,inventory):
     keys=KEYS+["PERIOD","SCENARIO_ID"]
