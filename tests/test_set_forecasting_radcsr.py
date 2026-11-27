@@ -527,3 +527,90 @@ def test_radcsr_enforces_mean_coefficient_at_least_sigma_coefficient():
     with pytest.raises(ValueError, match="kappa_mu >= kappa_sigma"):
         radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, .5,
                            kappa_sigma=.75, kappa_mu=.50)
+
+
+
+def test_primary_risk_methods_are_aligned_to_explicit_common_keys():
+    import pytest
+    from src.set_forecasting.risk.simulation import (
+        PRIMARY_RISK_METHODS, align_primary_method_observations,
+    )
+    rows = []
+    periods = pd.date_range("2025-01-01", periods=2, freq="MS")
+    for method in PRIMARY_RISK_METHODS:
+        for index, period in enumerate(periods):
+            if method == "Static" and index == 1:
+                continue
+            row = dict(zip(KEYS, ["ORG01", "000123", "U1"]))
+            row.update(PERIOD=period, SCENARIO_ID="S1_Stable",
+                       METHOD=method, SHORTAGE_PROBABILITY=.25)
+            rows.append(row)
+    aligned, counts = align_primary_method_observations(pd.DataFrame(rows))
+    assert aligned.groupby("METHOD").size().nunique() == 1
+    assert aligned.groupby("METHOD").size().iloc[0] == 1
+    static = counts[counts.METHOD == "Static"].iloc[0]
+    assert static.INPUT_KEYS == 1
+    assert static.ALIGNED_KEYS == 1
+    assert static.DROPPED_KEYS == 0
+    assert (counts.ALIGNED_KEYS == 1).all()
+
+    duplicate = pd.concat([pd.DataFrame(rows), pd.DataFrame(rows).iloc[[0]]], ignore_index=True)
+    with pytest.raises(ValueError, match="Duplicate primary method/evaluation keys"):
+        align_primary_method_observations(duplicate)
+
+
+def test_calibration_rejects_duplicate_method_evaluation_keys():
+    import pytest
+    from src.set_forecasting.risk.simulation import calibrate_risk_probabilities
+    x = sample(4)
+    x["SCENARIO_ID"] = "S1_Stable"
+    x["METHOD"] = "RADCSR"
+    x["SHORTAGE_PROBABILITY"] = .25
+    duplicated = pd.concat([x, x.iloc[[0]]], ignore_index=True)
+    inventory = x[KEYS + ["PERIOD", "SCENARIO_ID"]].copy()
+    inventory["STOCKOUT_LABEL"] = 0
+    with pytest.raises(ValueError, match="duplicate method/evaluation keys"):
+        calibrate_risk_probabilities(duplicated, inventory)
+
+
+def test_ingestion_persists_missing_month_model_demand_as_nan(tmp_path):
+    from src.set_forecasting.data.ingestion import build_monthly_series, compute_adi_cv2
+
+    rows = []
+    periods = pd.date_range("2023-01-01", periods=24, freq="MS")
+    for period in periods:
+        if period == periods[8]:
+            continue
+        rows.append({
+            "YEAR_MONTH": period.strftime("%Y%m"),
+            "ODS_CODE": "ORG01",
+            "VMP_SNOMED_CODE": "000123",
+            "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+            "VMP_PRODUCT_NAME": "Test medicine",
+            "UNIT_OF_MEASURE_NAME": "tablet",
+            "SOURCE_RECORDS": 1,
+            "POSITIVE_QUANTITY": 10.0,
+            "NEGATIVE_QUANTITY": 0.0,
+            "NET_QUANTITY": 10.0,
+            "TOTAL_INDICATIVE_COST": 20.0,
+            "VALID_QUANTITY_RECORDS": 1,
+            "INVALID_QUANTITY_RECORDS": 0,
+            "MISSING_OR_INVALID_COST_RECORDS": 0,
+            "NEGATIVE_COST_RECORDS": 0,
+        })
+    aggregated = tmp_path / "aggregated.parquet"
+    series_path = tmp_path / "monthly.parquet"
+    pd.DataFrame(rows).to_parquet(aggregated, index=False)
+    _, cohort, _ = build_monthly_series(
+        aggregated, series_path, tmp_path / "cohort.csv",
+        tmp_path / "diagnostics.json", min_periods=18, min_nonzero=6,
+        load_series=False,
+    )
+    saved = pd.read_parquet(series_path)
+    missing = saved[saved.OBSERVATION_MISSING]
+    assert len(missing) == 1
+    assert missing.MODEL_DEMAND.isna().all()
+    observed = saved.loc[~saved.OBSERVATION_MISSING, "MODEL_DEMAND"].to_numpy(float)
+    adi, _ = compute_adi_cv2(observed)
+    assert adi == 1.0
+    assert cohort.iloc[0].N_OBSERVED == 23
