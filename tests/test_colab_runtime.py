@@ -149,3 +149,32 @@ def test_fingerprint_changes_when_stage_code_changes(tmp_path, monkeypatch):
     after = colab_runtime.run_fingerprint(source, {"stage": "test"}, ("src/module.py",))
 
     assert before != after
+
+
+def test_require_stage_rejects_missing_or_stale_upstream_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runtime, "ROOT", tmp_path)
+    monkeypatch.setattr(colab_runtime, "MANIFEST_PATH", tmp_path / "output" / "colab_run_manifest.json")
+
+    import pytest
+    with pytest.raises(RuntimeError, match="Required stage 'ingestion'"):
+        colab_runtime.require_stage("ingestion", "expected", ("data/processed/series.parquet",))
+
+    artifact = tmp_path / "data" / "processed" / "series.parquet"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"series")
+    colab_runtime._write_manifest({
+        "version": 1,
+        "stages": {"ingestion": {
+            "fingerprint": "expected",
+            "artifacts": ["data/processed/series.parquet"],
+            "status": "completed",
+        }},
+    })
+    colab_runtime.require_stage(
+        "ingestion", "expected", ("data/processed/series.parquet",)
+    )
+
+    with pytest.raises(RuntimeError, match="Required stage 'ingestion'"):
+        colab_runtime.require_stage(
+            "ingestion", "stale", ("data/processed/series.parquet",)
+        )
