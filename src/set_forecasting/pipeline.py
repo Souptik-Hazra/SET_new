@@ -143,6 +143,14 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         column for column in reliability_observed.columns
         if column not in pred.columns and column not in KEYS + ["PERIOD"]
     ]
+    required_reliability_signals = [
+        "R_E", "R_B", "R_B_SYMMETRIC", "R_B_OVER", "R_B_UNDER",
+        "R_C", "R_D", "R_UNRELIABILITY", "R_REL", "SHIFT_DETECTOR_FLAG",
+    ]
+    for column in required_reliability_signals:
+        if column not in reliability_columns:
+            reliability_observed[column] = 0
+            reliability_columns.append(column)
     reliability = pred.merge(
         reliability_observed[KEYS + ["PERIOD"] + reliability_columns],
         on=KEYS + ["PERIOD"], how="left", validate="one_to_one"
@@ -154,7 +162,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             if column in {"R_E", "R_B", "R_B_SYMMETRIC", "R_B_OVER", "R_B_UNDER", "R_C", "R_D", "R_UNRELIABILITY", "R_REL", "SHIFT_DETECTOR_FLAG"}:
                 reliability[column] = reliability[column].fillna(0)
     reliability.to_parquet(proc/"reliability.parquet",index=False)
-    intervals=interval_baselines(pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
+    intervals=interval_baselines(observed_pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));intervals.to_parquet(proc/"reliability_baselines.parquet",index=False)
     interval_test=intervals[intervals.SPLIT=="test"] if "SPLIT" in intervals else intervals
     interval_summary=interval_test.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
     interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
