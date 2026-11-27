@@ -218,6 +218,7 @@ def model_fingerprint(bootstrap: int, seed: int) -> str:
     model_code = [
         str(path.relative_to(ROOT))
         for path in (ROOT / "src" / "set_forecasting").rglob("*.py")
+        if "validation" not in path.relative_to(ROOT).parts
     ]
     return run_fingerprint(
         series_path, params,
