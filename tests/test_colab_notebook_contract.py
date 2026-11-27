@@ -48,11 +48,11 @@ def test_notebook_imports_the_runtime_and_uses_all_stage_entrypoints():
 def test_notebook_branch_and_dataset_paths_match_repository_contract():
     notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
     assert 'BRANCH = "feature/colab-pipeline-execution"' in notebook_source
-    assert 'DEFAULT_NOTEBOOK_COMMIT = "8b096c970c9b3af976e10a53c0631506e98d5527"' in notebook_source
+    assert 'DEFAULT_NOTEBOOK_COMMIT = "2f86a632bebef9c059d5e0d4b84171fbf04b8b65"' in notebook_source
     assert 'git", "checkout", NOTEBOOK_COMMIT' in notebook_source
     assert "WARNING: NOTEBOOK_COMMIT override active" in notebook_source
     assert 'REPO_DIR = Path("/content/SET_new")' in notebook_source
-    assert 'DRIVE_RAW_CSV = Path("/content/drive/MyDrive/SET_Pharma/data/raw/combined_secondary_care_medicines.csv")' in notebook_source
+    assert 'DRIVE_RAW_CSV = Path("/content/drive/MyDrive/Dataset/combined_secondary_care_medicines.csv")' in notebook_source
     assert 'LOCAL_RAW_CSV = REPO_DIR / "data" / "raw" / "combined_secondary_care_medicines.csv"' in notebook_source
     assert (ROOT / "scripts" / "colab_runtime.py").is_file()
     assert (ROOT / "requirements.txt").is_file()
