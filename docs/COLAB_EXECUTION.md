@@ -45,3 +45,12 @@ Processed data and reports are copied to Drive after each successful stage. On r
 The notebook persists `data/processed/` and `output/` under `MyDrive/SET_Pharma_Colab_Artifacts/`. This includes forecasts, reliability outputs, RADCSR outputs, simulated inventory, pipeline reports and mathematical-validation reports.
 
 **Research limitation:** Inventory outcomes are simulated. Stockout labels are not observed events. Results based on simulated labels must not be presented as validation against observed hospital stockouts.
+
+
+## Research figures
+
+After mathematical validation, the notebook calls `src.visualization.generate_figures.generate_figures()`. The generator reads the current Parquet/CSV outputs and writes available PNGs to `output/figures/`. It does not substitute hard-coded example values when an artifact is missing.
+
+The notebook displays each generated PNG inline with IPython and then synchronizes the complete `output/` directory to Drive. A machine-readable `output/figures/figure_generation_report.json` lists generated files and any skipped figures with the missing-input reason. Re-run the figure cell after changing outputs to refresh the plots.
+
+Figures based on inventory and stockout labels are explicitly marked as simulated. These must not be described as observed hospital stockout results. Figures are generated only when their required source artifacts exist; a skipped figure is preferable to a fabricated or misleading plot.
