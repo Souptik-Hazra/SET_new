@@ -24,3 +24,4 @@ jobs:
           tests/test_pipeline_units.py
           tests/test_set_forecasting_radcsr.py
           tests/test_colab_runtime.py
+          tests/test_colab_notebook_contract.py
