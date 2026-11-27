@@ -310,6 +310,12 @@ def align_primary_method_observations(probabilities, methods=PRIMARY_RISK_METHOD
 
 def brier_by_method(probabilities,inventory):
     keys=KEYS+["PERIOD","SCENARIO_ID"]
+    duplicate_keys = keys + ["METHOD"]
+    if probabilities.duplicated(duplicate_keys).any():
+        sample = probabilities.loc[
+            probabilities.duplicated(duplicate_keys, keep=False), duplicate_keys
+        ].head(5).to_dict("records")
+        raise ValueError(f"Calibration input contains duplicate method/evaluation keys: {sample}")
     x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner",validate="many_to_one")
     x=x.dropna(subset=["STOCKOUT_LABEL"])
     x["BRIER"]=(x.SHORTAGE_PROBABILITY-x.STOCKOUT_LABEL)**2
