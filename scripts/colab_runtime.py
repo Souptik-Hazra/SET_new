@@ -105,7 +105,7 @@ def run_fingerprint(
     source = Path(source_csv).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Pipeline input not found: {source}")
-    config = ROOT / "config" / "config.yaml"
+    config = ROOT / "src" / "set_forecasting" / "config.py"
     payload = {
         "source": {
             "name": source.name,
@@ -199,6 +199,7 @@ def ingestion_fingerprint(source_csv: str | Path, min_periods: int, min_nonzero:
         code_paths=(
             "src/set_forecasting/data/ingestion.py",
             "src/set_forecasting/data/source.py",
+            "src/set_forecasting/config.py",
             "scripts/colab_runtime.py",
         ),
     )
@@ -222,7 +223,7 @@ def model_fingerprint(bootstrap: int, seed: int) -> str:
     ]
     return run_fingerprint(
         series_path, params,
-        code_paths=model_code + ["scripts/colab_runtime.py"],
+        code_paths=model_code + ["src/set_forecasting/config.py", "scripts/colab_runtime.py"],
     )
 
 
