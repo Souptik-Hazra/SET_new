@@ -24,8 +24,8 @@ aggregation key additionally includes `YEAR_MONTH`. IDs are stored as strings.
 ## Quantity semantics
 
 The pipeline preserves positive quantity, negative quantity, net quantity and
-cost separately. Negative movements are not silently discarded or presumed to
-be returns. The current candidate modelling target is positive quantity; this
+cost separately. Negative movements are not silently discarded or presumed
+to be returns. The current candidate modelling target is positive quantity; this
 is an explicit modelling choice to be validated, not a claim that it equals
 net consumption.
 
@@ -40,7 +40,7 @@ nonzero positive-quantity periods. Demand-pattern diagnostics use ADI =
 observed periods / nonzero periods and CV² of positive demand sizes. Smooth,
 Erratic, Intermittent and Lumpy are distinguished.
 
-## Canonical package and execution
+## Canonical package and unified command
 
 All active SCMD implementation code belongs in `src/set_forecasting/`:
 
@@ -50,7 +50,7 @@ All active SCMD implementation code belongs in `src/set_forecasting/`:
 - Phase 4: `reliability/index.py` and `reliability/baselines.py`
 - Phases 5–8: `pipeline.py`, `risk/` and `reliability/`
 
-Run the single supported end-to-end command from the repository root:
+Use the unified command-line entry point from the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -58,8 +58,16 @@ python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicin
 pytest -q
 ```
 
-The old individual phase scripts and `src/scmd_*.py` modules are compatibility
-adapters only. Do not add new implementation logic to them.
+The default command performs Phase 1 ingestion followed by the canonical
+SCMD/RADCSR model pipeline. For stage-level execution, use
+`python scripts/run_pipeline.py phase1`, `phase2`, `phase3`, `phase4`,
+or `model`. The `model` command reruns Phases 5–8 after monthly series data
+has already been prepared. Run `python scripts/run_pipeline.py --help` for
+available options.
+
+The former root-level phase runners have been consolidated into this one CLI.
+The `src/scmd_*.py` modules remain compatibility adapters; new implementation
+logic belongs in `src/set_forecasting/`.
 
 ## Reproducibility and limitations
 
