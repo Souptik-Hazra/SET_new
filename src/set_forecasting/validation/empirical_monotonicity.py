@@ -17,7 +17,7 @@ REQUIRED = KEYS + [
 
 def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
                 kappa_l=1.50, horizon_cap=2.0, grid_points=101,
-                batch_size=4096):
+                batch_size=4096, monotonicity_tolerance=1e-12):
     """Check both RADCSR probability curves for every supplied test observation."""
     missing = sorted(set(REQUIRED) - set(frame.columns))
     if missing:
@@ -67,12 +67,15 @@ def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
             ("RADCSR_PROBABILITY", "radcsr"),
         ):
             curves = result[source].to_numpy(float).reshape(n, len(grid))
-            passed = np.all(np.diff(curves, axis=1) > 0.0, axis=1)
+            increments = np.diff(curves, axis=1)
+            passed = np.all(increments >= -float(monotonicity_tolerance), axis=1)
             batch[target + "_pass"] = passed
-            batch[target + "_minimum_increment"] = np.diff(curves, axis=1).min(axis=1)
+            batch[target + "_strict"] = np.all(increments > float(monotonicity_tolerance), axis=1)
+            batch[target + "_minimum_increment"] = increments.min(axis=1)
         batch["LOW_AVAILABILITY"] = low
         rows.append(batch[identity + [
             "LOW_AVAILABILITY", "distribution_pass", "radcsr_pass",
+            "distribution_strict", "radcsr_strict",
             "distribution_minimum_increment", "radcsr_minimum_increment",
         ]])
 
@@ -83,8 +86,10 @@ def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
             "observations": int(len(group)),
             "distribution_pass": int(group.distribution_pass.sum()),
             "distribution_fail": int((~group.distribution_pass).sum()),
+            "distribution_strict_increase": int(group.distribution_strict.sum()),
             "radcsr_pass": int(group.radcsr_pass.sum()),
             "radcsr_fail": int((~group.radcsr_pass).sum()),
+            "radcsr_strict_increase": int(group.radcsr_strict.sum()),
             "low_availability_observations": int(group.LOW_AVAILABILITY.sum()),
             "low_availability_failures": int((
                 group.LOW_AVAILABILITY &
@@ -107,8 +112,10 @@ def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
         "total_test_observations": int(len(checked)),
         "distribution_pass": int(checked.distribution_pass.sum()),
         "distribution_fail": int(len(distribution_fail)),
+        "distribution_strict_increase": int(checked.distribution_strict.sum()),
         "radcsr_pass": int(checked.radcsr_pass.sum()),
         "radcsr_fail": int(len(radcsr_fail)),
+        "radcsr_strict_increase": int(checked.radcsr_strict.sum()),
         "both_pass": int((checked.distribution_pass & checked.radcsr_pass).sum()),
         "both_fail": int((~checked.distribution_pass | ~checked.radcsr_pass).sum()),
         "low_availability_observations": int(checked.LOW_AVAILABILITY.sum()),
@@ -121,7 +128,8 @@ def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
             "kappa_sigma": float(kappa_sigma), "kappa_mu": float(kappa_mu),
             "kappa_l": float(kappa_l), "horizon_cap": horizon_cap,
         },
-        "method": "Every saved held-out test observation; both raw probability curves swept over R_REL in [0,1]; strict positive increments required.",
+        "monotonicity_tolerance": float(monotonicity_tolerance),
+        "method": "Every saved held-out test observation; both raw probability curves swept over R_REL in [0,1]; non-decreasing within floating-point tolerance is required. Strict-increase counts are reported separately.",
         "outcome_boundary": "Inventory and stockout outcomes are simulated; this audit checks mathematical monotonicity, not observed stockout prediction.",
     }
 
