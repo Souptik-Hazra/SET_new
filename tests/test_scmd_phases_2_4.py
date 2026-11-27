@@ -21,7 +21,7 @@ def test_missing_month_target_is_not_fabricated():
     x=sample();x.loc[5,"OBSERVATION_MISSING"]=True
     f=create_features(x)
     assert pd.isna(f.loc[5,"LAG_1"]) is False
-    assert f.loc[6,"LAG_1"] is np.nan or np.isnan(f.loc[6,"LAG_1"])
+    assert pd.isna(f.loc[6, "LAG_1"])
 
 def test_calibration_uses_prior_residuals():
     x=sample().tail(6).copy()
