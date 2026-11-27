@@ -577,3 +577,44 @@ def test_empirical_monotonicity_low_availability_failure_is_a_hard_failure(monke
     assert result["radcsr_fail"] == 1
     assert result["low_availability_failures"] == 1
     assert result["violating_observation_keys"][0]["SCENARIO_ID"] == "S1_Stable"
+
+
+
+def test_empirical_audit_join_rejects_unmatched_inventory_keys():
+    import pytest
+    from src.set_forecasting.validation.empirical_monotonicity import merge_scenario_inventory
+
+    keys = {
+        "ODS_CODE": "ORG01", "VMP_SNOMED_CODE": "000123",
+        "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+        "PERIOD": pd.Timestamp("2025-01-01"), "SCENARIO_ID": "S1_Stable",
+    }
+    scenarios = pd.DataFrame([{
+        **keys, "SPLIT": "test", "Q10": 8.0, "Q50": 10.0,
+        "Q90": 13.0, "LEAD_TIME_MONTHS": 2.0, "R_REL": .2,
+    }])
+    inventory = pd.DataFrame([{
+        **{**keys, "ODS_CODE": "ORG02"}, "AVAILABLE_STOCK": 5.0,
+    }])
+    with pytest.raises(ValueError, match="join coverage mismatch"):
+        merge_scenario_inventory(scenarios, inventory)
+
+
+def test_empirical_audit_join_preserves_every_matching_row():
+    from src.set_forecasting.validation.empirical_monotonicity import merge_scenario_inventory
+
+    rows = []
+    for i in range(3):
+        rows.append({
+            "ODS_CODE": f"ORG{i}", "VMP_SNOMED_CODE": "000123",
+            "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+            "PERIOD": pd.Timestamp("2025-01-01") + pd.offsets.MonthBegin(i),
+            "SCENARIO_ID": "S1_Stable", "SPLIT": "test",
+            "Q10": 8.0, "Q50": 10.0, "Q90": 13.0,
+            "LEAD_TIME_MONTHS": 2.0, "R_REL": .2,
+        })
+    scenarios = pd.DataFrame(rows)
+    inventory = scenarios[KEYS + ["PERIOD", "SCENARIO_ID"]].copy()
+    inventory["AVAILABLE_STOCK"] = 5.0
+    merged = merge_scenario_inventory(scenarios, inventory)
+    assert len(merged) == len(scenarios) == len(inventory)
