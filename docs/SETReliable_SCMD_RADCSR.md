@@ -8,15 +8,17 @@
 - `docs/`: research protocol and data dictionary
 - `notebooks/`: exploratory analysis and Colab execution
 - `output/tables/`, `output/figures/`: generated artifacts (never commit)
-- `scripts/run_pipeline.py`: single end-to-end entry point
+- `scripts/run_pipeline.py`: unified command-line entry point for end-to-end and stage-level execution
 - `src/set_forecasting/`: canonical package, organized by data, features, forecasting, reliability, risk and orchestration
 - `tests/`: unit and regression tests
 
-The root-level `run_phase*_scmd.py` commands and `src/scmd_*.py` modules
-are compatibility adapters only. New implementation code belongs in
-`src/set_forecasting/`. In particular, forecasting and reliability logic
-must not be duplicated in top-level `src/scmd_forecasting.py` or
-`src/scmd_reliability.py`.
+The former root-level `run_*_scmd.py` scripts and
+`run_full_cohort_pipeline.py` have been consolidated into
+`scripts/run_pipeline.py`. The legacy pharmacy-schema full-cohort workflow
+remains disabled because its data contract is incompatible with SCMD.
+The `src/scmd_*.py` modules are compatibility adapters only. New
+implementation code belongs in `src/set_forecasting/`; forecasting and
+reliability logic must not be duplicated in the adapters.
 
 ## Canonical execution
 
@@ -28,9 +30,21 @@ python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicin
 pytest -q
 ```
 
-If ingestion has already completed and the monthly Parquet series is present,
-`python run_phase5_8_scmd.py` reruns the canonical model pipeline without
-repeating ingestion.
+The default command performs Phase 1 ingestion followed by the canonical
+RADCSR model pipeline. Stage-level commands are available through the same
+entry point:
+
+```bash
+python scripts/run_pipeline.py phase1
+python scripts/run_pipeline.py phase2
+python scripts/run_pipeline.py phase3
+python scripts/run_pipeline.py phase4
+python scripts/run_pipeline.py model
+```
+
+Use `model` when the monthly series Parquet file already exists and only
+the forecasting/reliability/RADCSR model pipeline needs to be rerun. Run
+`python scripts/run_pipeline.py --help` for command-specific options.
 
 ## Research boundary
 
