@@ -192,6 +192,47 @@ def run_stage(
     return {"stage": stage, "status": "COMPLETED", "result": result}
 
 
+def ingestion_fingerprint(source_csv: str | Path, min_periods: int, min_nonzero: int) -> str:
+    return run_fingerprint(
+        source_csv,
+        {"stage": "ingestion", "min_periods": min_periods, "min_nonzero": min_nonzero},
+        code_paths=(
+            "src/set_forecasting/data/ingestion.py",
+            "src/set_forecasting/data/source.py",
+            "scripts/colab_runtime.py",
+        ),
+    )
+
+
+def model_fingerprint(bootstrap: int, seed: int) -> str:
+    series_path = ROOT / "data" / "processed" / "scmd_monthly_series.parquet"
+    if not series_path.is_file():
+        raise FileNotFoundError("Monthly series checkpoint is missing. Run ingestion first.")
+    params = {
+        "stage": "model_pipeline",
+        "series_size": series_path.stat().st_size,
+        "series_mtime_ns": series_path.stat().st_mtime_ns,
+        "bootstrap": int(bootstrap),
+        "seed": int(seed),
+    }
+    model_code = [
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "src" / "set_forecasting").rglob("*.py")
+    ]
+    return run_fingerprint(
+        series_path, params,
+        code_paths=model_code + ["scripts/colab_runtime.py"],
+    )
+
+
+def require_stage(stage: str, fingerprint: str, artifacts: tuple[str, ...]) -> None:
+    if not stage_is_complete(stage, fingerprint, artifacts):
+        raise RuntimeError(
+            f"Required stage '{stage}' is not complete for the current inputs/code. "
+            "Run the preceding notebook stage successfully; do not rely on leftover files."
+        )
+
+
 def run_ingestion(
     source_csv: str | Path,
     *,
@@ -201,16 +242,7 @@ def run_ingestion(
 ):
     from src.set_forecasting.data.ingestion import run_phase1_from_csv
 
-    params = {"min_periods": min_periods, "min_nonzero": min_nonzero}
-    fingerprint = run_fingerprint(
-        source_csv,
-        {"stage": "ingestion", **params},
-        code_paths=(
-            "src/set_forecasting/data/ingestion.py",
-            "src/set_forecasting/data/source.py",
-            "scripts/colab_runtime.py",
-        ),
-    )
+    fingerprint = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
     return run_stage(
         "ingestion", fingerprint, INGESTION_ARTIFACTS,
         lambda: run_phase1_from_csv(
@@ -224,26 +256,20 @@ def run_ingestion(
     )
 
 
-def run_models(*, bootstrap: int = 2000, seed: int | None = None, force: bool = False):
+def run_models(
+    source_csv: str | Path,
+    *,
+    min_periods: int = 18,
+    min_nonzero: int = 6,
+    bootstrap: int = 2000,
+    seed: int = 42,
+    force: bool = False,
+):
     from src.set_forecasting.pipeline import run_model_pipeline
 
-    series_path = ROOT / "data" / "processed" / "scmd_monthly_series.parquet"
-    if not series_path.is_file():
-        raise FileNotFoundError(
-            "Monthly series checkpoint is missing. Run the ingestion stage first."
-        )
-    params = {
-        "stage": "model_pipeline",
-        "series_size": series_path.stat().st_size,
-        "series_mtime_ns": series_path.stat().st_mtime_ns,
-        "bootstrap": bootstrap,
-        "seed": seed,
-    }
-    model_code = [str(path.relative_to(ROOT)) for path in (ROOT / "src" / "set_forecasting").rglob("*.py")]
-    fingerprint = run_fingerprint(
-        series_path, params,
-        code_paths=model_code + ["scripts/colab_runtime.py"],
-    )
+    ingestion_fp = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
+    require_stage("ingestion", ingestion_fp, INGESTION_ARTIFACTS)
+    fingerprint = model_fingerprint(bootstrap, seed)
     return run_stage(
         "model_pipeline", fingerprint, MODEL_ARTIFACTS,
         lambda: run_model_pipeline(n_boot=bootstrap, seed=seed),
@@ -252,19 +278,24 @@ def run_models(*, bootstrap: int = 2000, seed: int | None = None, force: bool = 
     )
 
 
-def run_mathematical_validation(*, force: bool = False):
+def run_mathematical_validation(
+    *,
+    bootstrap: int = 2000,
+    seed: int = 42,
+    force: bool = False,
+):
     from src.set_forecasting.validation.mathematical import run
 
+    model_fp = model_fingerprint(bootstrap, seed)
+    require_stage("model_pipeline", model_fp, MODEL_ARTIFACTS)
     series_path = ROOT / "data" / "processed" / "scmd_monthly_series.parquet"
     forecasts_path = ROOT / "data" / "processed" / "forecasts.parquet"
-    if not series_path.is_file() or not forecasts_path.is_file():
-        raise FileNotFoundError(
-            "Mathematical validation requires completed ingestion and model stages."
-        )
     params = {
         "stage": "mathematical_validation",
         "series_mtime_ns": series_path.stat().st_mtime_ns,
+        "forecasts_size": forecasts_path.stat().st_size,
         "forecasts_mtime_ns": forecasts_path.stat().st_mtime_ns,
+        "model_fingerprint": model_fp,
     }
     fingerprint = run_fingerprint(
         series_path, params,
