@@ -562,14 +562,15 @@ def test_empirical_monotonicity_low_availability_failure_is_a_hard_failure(monke
         "AVAILABLE_STOCK": 5.0, "LEAD_TIME_MONTHS": 2.0, "R_REL": .2,
     }])
 
-    def flat_probability(*args, **kwargs):
+    def decreasing_probability(*args, **kwargs):
         n = len(np.asarray(args[0]))
+        curve = np.tile(np.linspace(.6, .4, 101), n // 101)
         return pd.DataFrame({
-            "RADCSR_DISTRIBUTION_PROBABILITY": np.full(n, .5),
-            "RADCSR_PROBABILITY": np.full(n, .5),
+            "RADCSR_DISTRIBUTION_PROBABILITY": curve,
+            "RADCSR_PROBABILITY": curve,
         })
 
-    monkeypatch.setattr(audit, "radcsr_probability", flat_probability)
+    monkeypatch.setattr(audit, "radcsr_probability", decreasing_probability)
     result = audit.audit_frame(rows)
     assert result["status"] == "FAIL"
     assert result["distribution_fail"] == 1
