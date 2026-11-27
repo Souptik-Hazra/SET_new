@@ -85,20 +85,35 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run_fingerprint(source_csv: str | Path, parameters: dict | None = None) -> str:
-    """Fingerprint source metadata, config, revision and execution parameters."""
+def _code_digest(paths: tuple[str, ...] | list[str]) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(paths):
+        path = ROOT / relative
+        if not path.is_file():
+            raise FileNotFoundError(f"Checkpoint dependency is missing: {path}")
+        digest.update(relative.encode("utf-8"))
+        digest.update(_sha256(path).encode("ascii"))
+    return digest.hexdigest()
+
+
+def run_fingerprint(
+    source_csv: str | Path,
+    parameters: dict | None = None,
+    code_paths: tuple[str, ...] | list[str] = (),
+) -> str:
+    """Fingerprint source metadata, relevant code, config and stage parameters."""
     source = Path(source_csv).expanduser().resolve()
     if not source.is_file():
-        raise FileNotFoundError(f"SCMD source CSV not found: {source}")
+        raise FileNotFoundError(f"Pipeline input not found: {source}")
     config = ROOT / "config" / "config.yaml"
     payload = {
-        "git_revision": _git_revision(),
         "source": {
             "name": source.name,
             "size": source.stat().st_size,
             "mtime_ns": source.stat().st_mtime_ns,
         },
         "config_sha256": _sha256(config) if config.is_file() else None,
+        "code_sha256": _code_digest(code_paths) if code_paths else None,
         "parameters": parameters or {},
     }
     encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
@@ -187,7 +202,15 @@ def run_ingestion(
     from src.set_forecasting.data.ingestion import run_phase1_from_csv
 
     params = {"min_periods": min_periods, "min_nonzero": min_nonzero}
-    fingerprint = run_fingerprint(source_csv, {"stage": "ingestion", **params})
+    fingerprint = run_fingerprint(
+        source_csv,
+        {"stage": "ingestion", **params},
+        code_paths=(
+            "src/set_forecasting/data/ingestion.py",
+            "src/set_forecasting/data/source.py",
+            "scripts/colab_runtime.py",
+        ),
+    )
     return run_stage(
         "ingestion", fingerprint, INGESTION_ARTIFACTS,
         lambda: run_phase1_from_csv(
@@ -216,7 +239,11 @@ def run_models(*, bootstrap: int = 2000, seed: int | None = None, force: bool = 
         "bootstrap": bootstrap,
         "seed": seed,
     }
-    fingerprint = run_fingerprint(series_path, params)
+    model_code = [str(path.relative_to(ROOT)) for path in (ROOT / "src" / "set_forecasting").rglob("*.py")]
+    fingerprint = run_fingerprint(
+        series_path, params,
+        code_paths=model_code + ["scripts/colab_runtime.py"],
+    )
     return run_stage(
         "model_pipeline", fingerprint, MODEL_ARTIFACTS,
         lambda: run_model_pipeline(n_boot=bootstrap, seed=seed),
@@ -239,7 +266,15 @@ def run_mathematical_validation(*, force: bool = False):
         "series_mtime_ns": series_path.stat().st_mtime_ns,
         "forecasts_mtime_ns": forecasts_path.stat().st_mtime_ns,
     }
-    fingerprint = run_fingerprint(series_path, params)
+    fingerprint = run_fingerprint(
+        series_path, params,
+        code_paths=(
+            "src/set_forecasting/validation/mathematical.py",
+            "src/set_forecasting/risk/radcsr.py",
+            "src/set_forecasting/reliability/index.py",
+            "scripts/colab_runtime.py",
+        ),
+    )
     return run_stage(
         "mathematical_validation", fingerprint, MATH_ARTIFACTS,
         run, force=force,
