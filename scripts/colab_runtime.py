@@ -68,23 +68,13 @@ MATH_ARTIFACTS = (
 
 
 def assert_supported_python() -> dict:
-    """Require the repository's tested Python 3.11 runtime unless explicitly overridden."""
+    """Require the repository's configured Python 3.13 runtime."""
     actual = (sys.version_info.major, sys.version_info.minor)
-    if actual != (3, 11):
-        if os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON") != "1":
-            raise RuntimeError(
-                f"Unsupported Python {sys.version.split()[0]}. "
-                "This project requires Python 3.11.x. Set "
-                "SET_ALLOW_UNSUPPORTED_PYTHON=1 only to run an explicitly "
-                "non-reproducible compatibility experiment."
-            )
-        warnings.warn(
-            f"Running on Python {sys.version.split()[0]} by explicit override; "
-            "numerical reproducibility is not guaranteed.",
-            RuntimeWarning,
+    if actual != (3, 13):
+        raise RuntimeError(
+            f"Unsupported Python {sys.version.split()[0]}. "
+            "This project requires Python 3.13.x."
         )
-        return {"python_version": sys.version.split()[0], "python_supported": False,
-                "python_override": True}
     return {"python_version": sys.version.split()[0], "python_supported": True,
             "python_override": False}
 
