@@ -1,6 +1,9 @@
+import pytest
 import numpy as np
 import pandas as pd
 from legacy.scmd_phases_5_8 import adaptive_risk,monotonicity_sweep,simulate_scenarios,inventory_simulation,baseline_metrics,paired_bootstrap_holm
+
+pytestmark = pytest.mark.legacy
 K=["ODS_CODE","VMP_SNOMED_CODE","UNIT_OF_MEASURE_IDENTIFIER"]
 def sample():
  n=10; d={k:[v]*n for k,v in zip(K,["ORG","000123","U"])}
