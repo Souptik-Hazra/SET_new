@@ -134,6 +134,57 @@ def audit_frame(frame, kappa_sigma=0.50, kappa_mu=0.75,
     }
 
 
+def merge_scenario_inventory(scenarios, inventory):
+    """Join scenario rows to simulated inventory without silently losing keys."""
+    join_keys = KEYS + ["PERIOD", "SCENARIO_ID"]
+    required_scenario = join_keys + [
+        "SPLIT", "Q10", "Q50", "Q90", "LEAD_TIME_MONTHS", "R_REL",
+    ]
+    required_inventory = join_keys + ["AVAILABLE_STOCK"]
+    missing_scenario = sorted(set(required_scenario) - set(scenarios.columns))
+    missing_inventory = sorted(set(required_inventory) - set(inventory.columns))
+    if missing_scenario or missing_inventory:
+        raise ValueError(
+            "Saved audit inputs missing columns: "
+            f"scenario={missing_scenario}; inventory={missing_inventory}"
+        )
+    for label, frame in (("scenario", scenarios), ("inventory", inventory)):
+        if frame[join_keys].isna().any().any():
+            raise ValueError(f"Saved {label} keys contain null values")
+        if frame.duplicated(join_keys).any():
+            count = int(frame.duplicated(join_keys).sum())
+            raise ValueError(f"Saved {label} data contains {count:,} duplicate join keys")
+
+    scenario_keys = scenarios[join_keys].drop_duplicates()
+    inventory_keys = inventory[join_keys].drop_duplicates()
+    coverage = scenario_keys.merge(
+        inventory_keys, on=join_keys, how="outer", indicator=True, validate="one_to_one"
+    )
+    scenario_only = coverage.loc[coverage["_merge"] == "left_only", join_keys]
+    inventory_only = coverage.loc[coverage["_merge"] == "right_only", join_keys]
+    if not scenario_only.empty or not inventory_only.empty:
+        raise ValueError(
+            "Scenario/inventory join coverage mismatch: "
+            f"scenario_only={len(scenario_only):,}, inventory_only={len(inventory_only):,}; "
+            f"scenario_only_examples={scenario_only.head(5).astype(str).to_dict('records')}; "
+            f"inventory_only_examples={inventory_only.head(5).astype(str).to_dict('records')}"
+        )
+    if len(scenarios) != len(inventory):
+        raise ValueError(
+            f"Scenario/inventory row counts differ despite key coverage: "
+            f"scenarios={len(scenarios):,}, inventory={len(inventory):,}"
+        )
+    frame = scenarios.merge(
+        inventory[join_keys + ["AVAILABLE_STOCK"]], on=join_keys,
+        how="inner", validate="one_to_one",
+    )
+    if len(frame) != len(scenarios):
+        raise RuntimeError(
+            f"Scenario/inventory merge lost rows: before={len(scenarios):,}, after={len(frame):,}"
+        )
+    return frame
+
+
 def run_saved_audit(processed_dir="data/processed", output_dir="output"):
     root = Path(__file__).resolve().parents[3]
     processed = Path(processed_dir)
@@ -144,15 +195,7 @@ def run_saved_audit(processed_dir="data/processed", output_dir="output"):
         output = root / output
     scenarios = pd.read_parquet(processed / "scenario_streams.parquet")
     inventory = pd.read_parquet(processed / "simulated_inventory.parquet")
-    join_keys = KEYS + ["PERIOD", "SCENARIO_ID"]
-    required_inventory = join_keys + ["AVAILABLE_STOCK"]
-    missing = sorted(set(required_inventory) - set(inventory.columns))
-    if missing:
-        raise ValueError(f"Saved simulated inventory missing columns: {missing}")
-    frame = scenarios.merge(
-        inventory[required_inventory], on=join_keys, how="inner",
-        validate="one_to_one",
-    )
+    frame = merge_scenario_inventory(scenarios, inventory)
     config_path = root / "config" / "config.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
     risk = (config or {}).get("radcsr", {})
