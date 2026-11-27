@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import warnings
 import platform
 import shutil
 import subprocess
@@ -44,10 +46,34 @@ MATH_ARTIFACTS = (
 )
 
 
+def assert_supported_python() -> dict:
+    """Require the repository's tested Python 3.11 runtime unless explicitly overridden."""
+    actual = (sys.version_info.major, sys.version_info.minor)
+    if actual != (3, 11):
+        if os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON") != "1":
+            raise RuntimeError(
+                f"Unsupported Python {sys.version.split()[0]}. "
+                "This project requires Python 3.11.x. Set "
+                "SET_ALLOW_UNSUPPORTED_PYTHON=1 only to run an explicitly "
+                "non-reproducible compatibility experiment."
+            )
+        warnings.warn(
+            f"Running on Python {sys.version.split()[0]} by explicit override; "
+            "numerical reproducibility is not guaranteed.",
+            RuntimeWarning,
+        )
+        return {"python_version": sys.version.split()[0], "python_supported": False,
+                "python_override": True}
+    return {"python_version": sys.version.split()[0], "python_supported": True,
+            "python_override": False}
+
+
 def environment_report() -> dict:
     """Return runtime diagnostics without assuming a GPU is available."""
+    python_status = assert_supported_python()
     report = {
         "python": sys.version,
+        **python_status,
         "platform": platform.platform(),
         "cpu_count": __import__("os").cpu_count(),
     }
@@ -242,6 +268,7 @@ def run_ingestion(
     min_nonzero: int = 6,
     force: bool = False,
 ):
+    assert_supported_python()
     from src.set_forecasting.data.ingestion import run_phase1_from_csv
 
     fingerprint = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
@@ -267,6 +294,7 @@ def run_models(
     seed: int = 42,
     force: bool = False,
 ):
+    assert_supported_python()
     from src.set_forecasting.pipeline import run_model_pipeline
 
     ingestion_fp = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
@@ -286,6 +314,7 @@ def run_mathematical_validation(
     seed: int = 42,
     force: bool = False,
 ):
+    assert_supported_python()
     from src.set_forecasting.validation.mathematical import run
 
     model_fp = model_fingerprint(bootstrap, seed)
