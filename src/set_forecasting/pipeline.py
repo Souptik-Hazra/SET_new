@@ -62,9 +62,9 @@ def _stamp_output_csvs(output_dir):
 
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
-    if platform.python_version_tuple()[:2] != ("3", "13"):
+    if platform.python_version_tuple()[:3] != ("3", "13", "18"):
         raise RuntimeError(
-            f"Unsupported Python {platform.python_version()}; research pipeline requires Python 3.13.x."
+            f"Unsupported Python {platform.python_version()}; research pipeline requires Python 3.13.18."
         )
     root = get_project_root()
     def project_path(value):
@@ -353,7 +353,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             "higher_unreliability_severity":bool(value>=stable_unreliability)}
     _stamp_output_csvs(out)
     report={"runtime":{"python_version":platform.python_version(),
-        "python_supported":platform.python_version_tuple()[:2] == ("3", "13"),
+        "python_supported":platform.python_version_tuple()[:3] == ("3", "13", "18"),
         "python_override":False},
       "DATA_TYPE":"MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES",
       "observed_demand_disclaimer":OBSERVED_DEMAND_DISCLAIMER,
