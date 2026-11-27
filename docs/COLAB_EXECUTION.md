@@ -32,7 +32,7 @@ The initial workflow has three checkpoint boundaries:
 
 The current model pipeline is monolithic. If the runtime disconnects while it is executing, the model stage must be rerun; a completed ingestion checkpoint is retained. The notebook does not claim mid-model resume support. A future change may split the model pipeline into independently testable stages, preserving the current outputs and research semantics.
 
-Processed data and reports are copied to Drive after each successful stage. On reconnect, the notebook restores those artifacts before checking the manifest. Google Drive is persistent storage; `/content` is temporary runtime storage.
+Processed data and reports are copied to Drive after each successful stage. The notebook defaults to a fresh run and clears local processed outputs. Set `RESTORE_CHECKPOINTS = True` only when intentionally resuming a prior run; matching fingerprints and complete artifact checks are still required. Google Drive is persistent storage; `/content` is temporary runtime storage.
 
 ## Resource guidance
 
