@@ -76,3 +76,31 @@ def test_sync_artifacts_copies_processed_and_output_but_not_raw(tmp_path):
     assert "data/processed/x.parquet" in copied
     assert "output/report.json" in copied
     assert not (destination / "data" / "raw" / "private.csv").exists()
+
+
+def test_failed_forced_stage_invalidates_previous_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runtime, "ROOT", tmp_path)
+    monkeypatch.setattr(colab_runtime, "MANIFEST_PATH", tmp_path / "output" / "colab_run_manifest.json")
+    artifact = "output/result.json"
+    target = tmp_path / artifact
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("previous-success", encoding="utf-8")
+    colab_runtime._write_manifest({
+        "version": 1,
+        "stages": {"demo": {
+            "fingerprint": "fingerprint-a",
+            "artifacts": [artifact],
+            "status": "completed",
+        }},
+    })
+
+    def failing_action():
+        raise RuntimeError("simulated failure")
+
+    import pytest
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        colab_runtime.run_stage(
+            "demo", "fingerprint-a", (artifact,), failing_action, force=True
+        )
+
+    assert not colab_runtime.stage_is_complete("demo", "fingerprint-a", (artifact,))
