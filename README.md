@@ -20,7 +20,7 @@ The project does not claim to detect observed hospital stockouts. Statistical co
 
 ## Layout
 
-See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). New implementation code belongs in `src/set_forecasting/`. Root-level compatibility wrappers are retained only for migration support. The older pharmacy-schema implementation is historical; the SCMD pipeline does not import it.
+See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). New implementation code belongs in `src/set_forecasting/`. The former standalone root-level runners have been consolidated into `scripts/run_pipeline.py`. The older pharmacy-schema implementation is historical; the SCMD pipeline does not import it.
 
 ## Google Colab
 
