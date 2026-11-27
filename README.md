@@ -74,7 +74,7 @@ The former root-level phase runners have been consolidated into `scripts/run_pip
 
 ## 3. Setup and execution
 
-Python 3.11 is the supported environment.
+Python 3.13.18 is the supported environment.
 
 ```bash
 python -m venv .venv
