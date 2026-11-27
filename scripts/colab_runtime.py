@@ -146,6 +146,13 @@ def run_stage(
         print(f"[CHECKPOINT] {stage}: matching outputs found; skipping.")
         return {"stage": stage, "status": "SKIPPED_VALID_CHECKPOINT"}
 
+    # Invalidate any previous success record before work begins. If a forced
+    # rerun fails, stale outputs must not make the old checkpoint reusable.
+    manifest = _read_manifest()
+    manifest.setdefault("version", 1)
+    manifest.setdefault("stages", {}).pop(stage, None)
+    _write_manifest(manifest)
+
     print(f"[STAGE START] {stage}")
     result = action()
     missing = [item for item in artifacts
