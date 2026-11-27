@@ -104,3 +104,29 @@ def test_failed_forced_stage_invalidates_previous_checkpoint(tmp_path, monkeypat
         )
 
     assert not colab_runtime.stage_is_complete("demo", "fingerprint-a", (artifact,))
+
+
+def test_upstream_rerun_invalidates_downstream_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runtime, "ROOT", tmp_path)
+    monkeypatch.setattr(colab_runtime, "MANIFEST_PATH", tmp_path / "output" / "colab_run_manifest.json")
+    output = tmp_path / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    artifact = "output/ingestion.json"
+    (output / "ingestion.json").write_text("ok", encoding="utf-8")
+    (output / "math.json").write_text("old", encoding="utf-8")
+    colab_runtime._write_manifest({
+        "version": 1,
+        "stages": {
+            "ingestion": {"fingerprint": "old", "artifacts": [artifact], "status": "completed"},
+            "mathematical_validation": {"fingerprint": "math-old", "artifacts": ["output/math.json"], "status": "completed"},
+        },
+    })
+
+    colab_runtime.run_stage(
+        "ingestion", "new", (artifact,), lambda: None,
+        force=True, invalidate_stages=("mathematical_validation",),
+    )
+
+    assert not colab_runtime.stage_is_complete(
+        "mathematical_validation", "math-old", ("output/math.json",)
+    )
