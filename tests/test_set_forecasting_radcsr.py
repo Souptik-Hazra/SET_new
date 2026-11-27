@@ -553,6 +553,7 @@ def test_primary_risk_methods_are_aligned_to_explicit_common_keys():
     assert static.ALIGNED_KEYS == 1
     assert static.DROPPED_KEYS == 0
     assert (counts.ALIGNED_KEYS == 1).all()
+    assert (counts.loc[counts.METHOD != "Static", "DROPPED_KEYS"] == 1).all()
 
     duplicate = pd.concat([pd.DataFrame(rows), pd.DataFrame(rows).iloc[[0]]], ignore_index=True)
     with pytest.raises(ValueError, match="Duplicate primary method/evaluation keys"):
@@ -669,3 +670,20 @@ def test_pipeline_stamps_every_output_csv_with_simulation_disclaimer(tmp_path):
     assert result.loc[0, "DISCLAIMER"] == (
         "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
     )
+
+
+
+def test_mathematical_validation_reports_four_strict_monotonicity_sweeps():
+    from src.set_forecasting.validation.mathematical import monotonicity
+    sweeps = monotonicity()
+    assert len(sweeps) == 4
+    assert {(item["quantity"], item["regime"]) for item in sweeps} == {
+        ("RADCSR_DISTRIBUTION_PROBABILITY", "A < mu_L"),
+        ("RADCSR_PROBABILITY", "A < mu_L"),
+        ("RADCSR_DISTRIBUTION_PROBABILITY", "A >= mu_L"),
+        ("RADCSR_PROBABILITY", "A >= mu_L"),
+    }
+    for item in sweeps:
+        assert len(item["sequence"]) == 21
+        assert item["pass"] is True
+        assert item["minimum_increment"] > 0.0
