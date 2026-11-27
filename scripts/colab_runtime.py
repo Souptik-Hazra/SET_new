@@ -147,6 +147,7 @@ def run_fingerprint(
             "name": source.name,
             "size": source.stat().st_size,
             "mtime_ns": source.stat().st_mtime_ns,
+            "sha256": _sha256(source),
         },
         "config_sha256": _sha256(config) if config.is_file() else None,
         "code_sha256": _code_digest(code_paths) if code_paths else None,
