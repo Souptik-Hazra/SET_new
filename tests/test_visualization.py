@@ -81,10 +81,16 @@ def test_generates_ten_figures_from_pipeline_artifacts(tmp_path):
     )
     corr.insert(0, "signal", ["R_E", "R_B", "R_C", "R_D"])
     _write_csv(tmp_path, "output/tables/reliability_signal_correlations.csv", corr)
+    _write_csv(tmp_path, "output/tables/inventory_sensitivity.csv", pd.DataFrame({
+        "SERVICE_LEVEL": [0.90, 0.95, 0.90, 0.95],
+        "INITIAL_COVER_MONTHS": [1.0, 1.0, 2.0, 2.0],
+        "TARGET_COVER_MONTHS": [2.0, 2.0, 3.0, 3.0],
+        "SIMULATED_STOCKOUT_RATE": [0.2, 0.1, 0.15, 0.05],
+    }))
 
     generated = generate_figures(tmp_path)
 
-    assert len(generated) == 10
+    assert len(generated) == 11
     assert all(path.is_file() and path.stat().st_size > 0 for path in generated)
     report = json.loads((tmp_path / "output/figures/figure_generation_report.json").read_text())
     assert report["generated_count"] == 10
