@@ -44,7 +44,7 @@ def test_reliability_score_is_prequential():
     a=build_reliability_index(x)
     x.loc[x.index[5],"MODEL_DEMAND"]+=100
     b=build_reliability_index(x)
-    assert a.loc[5,"R_REL"]==b.loc[5,"R_REL"]
+    assert a.iloc[5]["R_REL"] == b.iloc[5]["R_REL"]
     assert set(["R_E","R_B","R_C","R_D","R_REL"]).issubset(a.columns)
 
 def test_reliability_baselines_are_all_exported():
