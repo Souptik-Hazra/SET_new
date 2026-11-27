@@ -1,39 +1,51 @@
-# SCMD implementation: Phases 1–4
+# SCMD Phases 1–4 — archived implementation notes
 
-All four phases now use monthly SCMD series keyed by `ODS_CODE`, `VMP_SNOMED_CODE`, and `UNIT_OF_MEASURE_IDENTIFIER`. Identifiers remain strings.
+> **Status: ARCHIVED.** The individual `run_phase1_scmd.py` through
+> `run_phase4_scmd.py` commands are compatibility entry points only. They are
+> not separate stages in the supported execution workflow. The implementation
+> is consolidated into `src/set_forecasting/`.
 
-## Phase 1 — ingestion and cohort
-`python run_phase1_scmd.py --source data/combined_secondary_care_medicines.csv`
+## Canonical implementation
 
-DuckDB aggregates the eight-column NHSBSA source to organisation × VMP × unit × month. It retains positive, negative and net quantity, cost, record counts and invalid-value counts. Monthly calendars are explicit. An absent source month is marked `OBSERVATION_MISSING` and its modelling target remains null; it is not silently converted to zero. Cohort defaults are 18 calendar months and six observed positive months. Series splits are chronological 60/20/20.
+| Phase | Package implementation |
+|---|---|
+| 1 — SCMD ingestion and monthly cohort | `src/set_forecasting/data/ingestion.py` |
+| 2 — past-only feature engineering | `src/set_forecasting/features/engineering.py` |
+| 3 — global quantile forecasting and naive baselines | `src/set_forecasting/forecasting/model.py` |
+| 4 — prequential reliability index and interval baselines | `src/set_forecasting/reliability/index.py`, `baselines.py` |
 
-`MODEL_DEMAND` is positive reported quantity and is only a modelling proxy. It is not verified consumption. Negative and net quantities are retained for sensitivity analysis.
+The orchestration and downstream RADCSR stages are in
+`src/set_forecasting/pipeline.py`.
 
-## Phase 2 — features
-`python run_phase2_scmd.py`
+## Supported execution
 
-Creates past-only lags (1, 2, 3, 6, 12), rolling summaries (3, 6, 12), observation ratios, and monthly/quarterly/annual calendar features. Missing observations are excluded from target lags. No daily/weekly or medicine-ID fields are used.
+Run the complete workflow from the repository root:
 
-## Phase 3 — forecasting
-`python run_phase3_scmd.py`
+```bash
+python scripts/run_pipeline.py --source data/raw/combined_secondary_care_medicines.csv
+```
 
-Uses the fixed Phase 1 chronological split and evaluates only observed test targets. Quantile LightGBM (q10/q50/q90) is used when LightGBM is installed and sufficient validation data exists. Otherwise a monthly seasonal-naive-12 baseline is used with explicitly labelled fallback intervals. Outputs include MAE, RMSE, WAPE, interval coverage/width, pinball losses and quantile-crossing rate.
+If monthly SCMD data has already been prepared and only the model/RADCSR
+workflow needs to be rerun:
 
-Install optional model dependency with `pip install lightgbm` to enable quantile LightGBM. The fallback is not equivalent to a trained probabilistic model.
+```bash
+python run_phase5_8_scmd.py
+```
 
-## Phase 4 — reliability and calibration
-`python run_phase4_scmd.py`
+The second command invokes the same canonical package orchestrator; it is not
+a second implementation.
 
-Per-series chronological calibration expands using only residuals observed before the current test timestamp. It reports rolling MAE, signed bias, coverage and a simple drift flag. This is an online diagnostic, not a guarantee of nominal coverage; assess coverage on a separate untouched evaluation period before making claims.
+## Compatibility
 
-## Output artifacts
-- `data/processed/scmd_monthly_aggregated.parquet`
-- `data/processed/scmd_monthly_series.parquet`
-- `data/processed/scmd_features.parquet`
-- `data/processed/scmd_test_predictions.parquet`
-- `data/processed/scmd_reliability.parquet`
-- `output/tables/cohort_inclusion_report.csv`
-- `output/tables/phase3_forecast_metrics.csv`
-- `output/tables/phase4_reliability_summary.csv`
+The root-level phase scripts and `src/scmd_*.py` modules remain temporarily
+for compatibility with older commands and imports. The Phase 3 and Phase 4
+modules delegate to `src.set_forecasting`; they must not contain independent
+forecasting or reliability algorithms. New code and tests should import from
+the package directly.
 
-Inventory outcomes are SIMULATED. Stockout labels are not observed events. SCMD does not provide stock-on-hand, receipts, procurement, supplier lead times or observed stockout events.
+## Research boundary
+
+The source dataset contains no observed stock-on-hand, receipts, purchase
+orders, supplier lead times or stockout events. Inventory outcomes are
+SIMULATED. Stockout labels are not observed events. Positive reported quantity
+is a modelling proxy, not verified consumption.
