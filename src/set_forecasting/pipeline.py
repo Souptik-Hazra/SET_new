@@ -9,7 +9,7 @@ from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
 from .reliability.baselines import interval_baselines
 from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
-from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities
+from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities,align_primary_method_observations,PRIMARY_RISK_METHODS
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
@@ -68,6 +68,24 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
                 bounds["validation"].max() < bounds["test"].min()):
             raise ValueError(f"Chronological split overlap/order violation for series {key}")
     features,pred,forecast_metrics,forecast_report=train_and_predict(series,random_state=int(seed),winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
+    if not pred.empty and "FORECAST_MODEL" not in pred:
+        raise RuntimeError("Forecast predictions are missing FORECAST_MODEL provenance.")
+    provenance = pred.groupby(KEYS + ["FORECAST_MODEL"], as_index=False, dropna=False).agg(
+        FORECAST_OBSERVATIONS=("PERIOD", "size"),
+        VALIDATION_OBSERVATIONS=("SPLIT", lambda values: int((values == "validation").sum())),
+        TEST_OBSERVATIONS=("SPLIT", lambda values: int((values == "test").sum())),
+    )
+    total_forecasts = int(provenance.FORECAST_OBSERVATIONS.sum()) if len(provenance) else 0
+    provenance["FORECAST_SHARE"] = provenance.FORECAST_OBSERVATIONS / max(total_forecasts, 1)
+    provenance["IS_FALLBACK"] = provenance.FORECAST_MODEL.eq("naive_fallback")
+    provenance.to_csv(out/"tables/forecast_provenance.csv", index=False)
+    fallback_observations = int(provenance.loc[provenance.IS_FALLBACK, "FORECAST_OBSERVATIONS"].sum()) if len(provenance) else 0
+    forecast_report.update({
+        "forecast_observations": total_forecasts,
+        "fallback_observations": fallback_observations,
+        "fallback_observation_share": float(fallback_observations / total_forecasts) if total_forecasts else None,
+        "forecast_sources": provenance.FORECAST_MODEL.value_counts().to_dict() if len(provenance) else {},
+    })
     features.to_parquet(proc/"features.parquet",index=False);pred.to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
     test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
@@ -115,7 +133,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             kappa_sigma=radcsr_ks,kappa_mu=radcsr_km,
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0))
-        base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
+        base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"] + (["FORECAST_MODEL"] if "FORECAST_MODEL" in g else [])].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g,
             kappa_sigma=radcsr_ks,
@@ -123,7 +141,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0),
             weights=rel_cfg.get("weights")).reset_index(drop=True)
-        ablation_keys = pd.concat([g[keys+["SPLIT"]].reset_index(drop=True)] * ab.METHOD.nunique(), ignore_index=True)
+        ablation_identity = keys + ["SPLIT"] + (["FORECAST_MODEL"] if "FORECAST_MODEL" in g else [])
+        ablation_keys = pd.concat([g[ablation_identity].reset_index(drop=True)] * ab.METHOD.nunique(), ignore_index=True)
         if len(ablation_keys) != len(ab):
             raise RuntimeError("Ablation key expansion does not match method output rows")
         ablation_rows.append(pd.concat([ablation_keys,ab.reset_index(drop=True)],axis=1))
@@ -131,15 +150,35 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     ablation_df=pd.concat(ablation_rows,ignore_index=True)
     ablation_df.to_parquet(proc/"radcsr_ablations.parquet",index=False)
     baseline=risk_baseline_probabilities(joined, seed=seed)
-    rad_prob=rad_df[keys+["SPLIT","METHOD","RADCSR_PROBABILITY"]].rename(columns={"RADCSR_PROBABILITY":"SHORTAGE_PROBABILITY"})
-    raw_probabilities=pd.concat([baseline,rad_prob,ablation_df],ignore_index=True)
-    # Calibrate every risk method using validation-only synthetic labels; score only held-out test.
-    calibrated=calibrate_risk_probabilities(raw_probabilities,inventory)
+    rad_identity = keys + ["SPLIT", "METHOD"] + (["FORECAST_MODEL"] if "FORECAST_MODEL" in rad_df else [])
+    rad_prob=rad_df[rad_identity+["RADCSR_PROBABILITY"]].rename(columns={"RADCSR_PROBABILITY":"SHORTAGE_PROBABILITY"})
+    primary_raw = pd.concat([baseline, rad_prob], ignore_index=True)
+    primary_raw, observation_counts = align_primary_method_observations(primary_raw)
+    observation_counts.to_csv(out/"tables/observation_counts.csv", index=False)
+    ablation_only = ablation_df[ablation_df.METHOD != "RADCSR"].copy()
+    raw_probabilities=pd.concat([primary_raw,ablation_only],ignore_index=True)
+    # Calibrate primary methods and ablations separately. The primary RADCSR
+    # method appears exactly once; ablation RADCSR is represented by primary_raw.
+    calibrated_primary=calibrate_risk_probabilities(primary_raw,inventory)
+    calibrated_ablations=(
+        calibrate_risk_probabilities(ablation_only,inventory)
+        if not ablation_only.empty else ablation_only.copy()
+    )
+    calibrated=pd.concat([calibrated_primary,calibrated_ablations],ignore_index=True)
+    primary_test = calibrated_primary[calibrated_primary.SPLIT == "test"].copy()
+    primary_test, bootstrap_observation_counts = align_primary_method_observations(primary_test)
+    if not bootstrap_observation_counts.empty:
+        bootstrap_observation_counts.to_csv(out/"tables/bootstrap_observation_counts.csv", index=False)
+    eval_prob = pd.concat([
+        primary_test,
+        calibrated_ablations[calibrated_ablations.SPLIT == "test"]
+        if not calibrated_ablations.empty else calibrated_ablations
+    ], ignore_index=True)
     calibrated.to_parquet(proc/"calibrated_risk_probabilities.parquet",index=False)
     raw_probabilities.to_parquet(proc/"raw_risk_probabilities.parquet",index=False)
     inventory.to_parquet(proc/"simulated_inventory.parquet",index=False)
     rad_df.to_parquet(proc/"radcsr_risk_details.parquet",index=False)
-    eval_prob=calibrated.drop(columns=["STOCKOUT_LABEL"],errors="ignore")
+    eval_prob=eval_prob.drop(columns=["STOCKOUT_LABEL"],errors="ignore")
     scores=brier_by_method(eval_prob,inventory);scores.to_csv(out/"tables/risk_brier_by_scenario.csv",index=False)
     calibration=calibration_metrics(eval_prob,inventory,n_bins=int(cfg.get("evaluation",{}).get("calibration_bins",10)))
     calibration.to_csv(out/"tables/risk_calibration_metrics.csv",index=False)
