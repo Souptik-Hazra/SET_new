@@ -2,7 +2,7 @@
 
 ## Standard structure
 
-- `config/`: configuration
+- `src/set_forecasting/config.py`: central Python configuration
 - `data/raw/`: original source data (never commit)
 - `data/processed/`: reproducible Parquet intermediates (never commit)
 - `docs/`: research protocol and data dictionary
