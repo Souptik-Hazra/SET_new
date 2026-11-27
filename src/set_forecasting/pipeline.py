@@ -1,5 +1,7 @@
 """Single orchestrator for SCMD → quantile forecasting → RADCSR → calibrated risk."""
 import json
+import os
+import platform
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -11,6 +13,18 @@ from .reliability.baselines import interval_baselines
 from .risk.radcsr import radcsr_probability,radcsr_ablations,monotonicity_audit,KEYS,DISCLAIMER
 from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_probabilities,brier_by_method,calibration_metrics,series_bootstrap_holm,calibrate_risk_probabilities,align_primary_method_observations,PRIMARY_RISK_METHODS
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
+
+
+def _stamp_output_csvs(output_dir):
+    """Stamp every exported research table with its simulated-outcome boundary."""
+    tables_dir = Path(output_dir) / "tables"
+    for csv_path in tables_dir.glob("*.csv"):
+        table = pd.read_csv(csv_path)
+        table["OUTCOME_TYPE"] = "SIMULATED"
+        table["STOCKOUTS_ARE_OBSERVED"] = 0
+        table["DISCLAIMER"] = DISCLAIMER
+        table.to_csv(csv_path, index=False)
+
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
     root = get_project_root()
@@ -245,7 +259,11 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             continue
         stress_checks[scenario]={"unreliability_increase_vs_stable":float(value-stable_unreliability),
             "higher_unreliability_severity":bool(value>=stable_unreliability)}
-    report={"forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
+    _stamp_output_csvs(out)
+    report={"runtime":{"python_version":platform.python_version(),
+        "python_supported":platform.python_version().startswith("3.11."),
+        "python_override":os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON")=="1"},
+      "forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
       "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),
       "reliability_score_semantics":{"canonical_column":"R_UNRELIABILITY","legacy_alias":"R_REL","direction":"higher_values_mean_worse_forecast_reliability"},
