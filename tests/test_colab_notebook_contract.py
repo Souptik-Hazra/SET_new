@@ -53,7 +53,7 @@ def test_notebook_branch_and_dataset_paths_match_repository_contract():
     assert 'LOCAL_RAW_CSV = REPO_DIR / "data" / "raw" / "combined_secondary_care_medicines.csv"' in notebook_source
     assert (ROOT / "scripts" / "colab_runtime.py").is_file()
     assert (ROOT / "requirements.txt").is_file()
-    assert (ROOT / "config" / "config.yaml").is_file()
+    assert (ROOT / "src" / "set_forecasting" / "config.py").is_file()
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "/data/raw/*" in gitignore
 
@@ -99,3 +99,29 @@ def test_notebook_generates_displays_and_syncs_figures():
     assert "radcsr_bins =" not in generator_source
     assert "static_bins =" not in generator_source
     assert "phase9_evaluation_summary.csv" not in generator_source
+
+
+def test_python_config_is_valid_and_notebook_uses_its_defaults():
+    from src.set_forecasting.config import get_config, validate_config
+
+    config = validate_config(get_config())
+    notebook_source = "\\n".join(source for _, source in code_cells(load_notebook()))
+    assert 'from src.set_forecasting.config import get_config, validate_config' in notebook_source
+    assert 'MIN_PERIODS = CONFIG["data"]["min_periods"]' in notebook_source
+    assert 'MIN_NONZERO = CONFIG["data"]["min_nonzero"]' in notebook_source
+    assert config["radcsr"]["kappa_mu"] >= config["radcsr"]["kappa_sigma"]
+    assert config["evaluation"]["bootstrap_resamples"] >= 100
+
+
+def test_active_python_modules_do_not_read_yaml_configuration():
+    paths = [
+        ROOT / "scripts" / "run_pipeline.py",
+        ROOT / "scripts" / "run_inventory_sensitivity.py",
+        ROOT / "scripts" / "colab_runtime.py",
+        ROOT / "src" / "set_forecasting" / "pipeline.py",
+        ROOT / "src" / "scmd_reliability.py",
+    ]
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        assert "config.yaml" not in source, f"YAML config reference remains in {path}"
+        assert "import yaml" not in source, f"YAML dependency remains in {path}"
