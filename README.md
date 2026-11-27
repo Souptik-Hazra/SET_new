@@ -135,14 +135,14 @@ For independently observed inventory data, follow [the observed inventory data c
 
 ## 4. Configuration and reproducibility
 
-The active defaults are defined in `config/config.yaml`. Current documented defaults include seed 42; cohort thresholds of 18 periods and 6 nonzero observations; chronological 60/20/20 splits; quantile levels 0.10/0.50/0.90; 90% prequential reliability coverage; reliability weights error 0.35, bias 0.25, coverage 0.25 and drift 0.15; RADCSR parameters `kappa_sigma=0.50`, `kappa_mu=0.75`, `kappa_l=1.50`; and inventory simulation assumptions explicitly marked simulated. The YAML file is the executable source of truth if these values change.
+The active defaults are defined in `src/set_forecasting/config.py` and validated by `validate_config()`. Current documented defaults include seed 42; cohort thresholds of 18 periods and 6 nonzero observations; chronological 60/20/20 splits; quantile levels 0.10/0.50/0.90; 90% prequential reliability coverage; reliability weights error 0.35, bias 0.25, coverage 0.25 and drift 0.15; RADCSR parameters `kappa_sigma=0.50`, `kappa_mu=0.75`, `kappa_l=1.50`; and inventory simulation assumptions explicitly marked simulated. The Python configuration module is the executable source of truth if these values change.
 
 Raw data, processed Parquet files and generated reports are local artifacts and must not be committed.
 
 ## 5. Implementation review decisions and limitations
 
 - Phase 3 uses pooled/global quantile LightGBM models per quantile. If LightGBM is unavailable or the train/validation sample is too small, the implementation uses a deterministic naive fallback. The report identifies which model path ran.
-- Phase 4 reads its defaults from `config/config.yaml`. Calibration intervals are fixed before the current outcome is appended to residual history.
+- Phase 4 reads its defaults from the central Python configuration module. Calibration intervals are fixed before the current outcome is appended to residual history.
 - The model pipeline runs reliability-adjusted risk through the inventory simulation. Bootstrap resampling is clustered by series and Holm-adjusted results are exported.
 - No clinical VEN or substitutability labels are inferred from demand or model output. Only externally verified mappings are accepted.
 - Passing unit tests does not establish scientific superiority. Research claims require successful full-cohort execution, held-out calibration, identical-observation comparisons and appropriate statistical evidence.
@@ -151,7 +151,7 @@ Raw data, processed Parquet files and generated reports are local artifacts and 
 ## 6. Repository structure
 
 ```text
-config/                         Configuration
+src/set_forecasting/config.py   Central Python configuration
 data/raw/                       Original SCMD source data (not committed)
 data/processed/                  Reproducible Parquet intermediates (not committed)
 docs/COLAB_EXECUTION.md          Colab execution and recovery guide
