@@ -225,3 +225,17 @@ def test_model_checkpoint_requires_every_declared_artifact(tmp_path, monkeypatch
         target.unlink()
         assert not colab_runtime.stage_is_complete("model_pipeline", "complete", artifacts), relative
         target.write_bytes(b"restored")
+
+
+
+def test_canonical_pipeline_rejects_python_other_than_313(monkeypatch):
+    import pytest
+    from src.set_forecasting import pipeline
+
+    monkeypatch.setattr(
+        pipeline.platform,
+        "python_version_tuple",
+        lambda: ("3", "12", "0"),
+    )
+    with pytest.raises(RuntimeError, match="requires Python 3.13.x"):
+        pipeline.run_model_pipeline()
