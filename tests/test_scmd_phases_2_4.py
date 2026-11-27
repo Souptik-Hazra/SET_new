@@ -29,3 +29,5 @@ def test_calibration_uses_prior_residuals():
     c=calibrate_intervals(x,min_history=2,window=3)
     assert c.loc[c.index[0],"CAL_Q10"]>=0
     assert c.loc[c.index[0],"ROLLING_MAE"]!=c.loc[c.index[0],"ABS_ERROR"]
+    assert set(c.DATA_TYPE) == {"OBSERVED_DEMAND"}
+    assert "OUTCOME_TYPE" not in c.columns

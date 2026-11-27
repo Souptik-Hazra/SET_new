@@ -8,6 +8,17 @@ from src.set_forecasting.config import get_config, validate_config
 from src.set_forecasting.data.source import get_project_root
 from src.set_forecasting.risk.simulation import inventory_sensitivity
 
+SIMULATED_OUTCOME_DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+
+
+def _stamp_simulated_outcomes(frame):
+    """Label sensitivity results as simulated inventory outcomes."""
+    result = frame.copy().drop(columns=["DATA_TYPE"], errors="ignore")
+    result["OUTCOME_TYPE"] = "SIMULATED"
+    result["STOCKOUTS_ARE_OBSERVED"] = 0
+    result["DISCLAIMER"] = SIMULATED_OUTCOME_DISCLAIMER
+    return result
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -37,7 +48,7 @@ def main():
         lead_times=lead_times,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(destination, index=False)
+    _stamp_simulated_outcomes(result).to_csv(destination, index=False)
     print(f"Wrote {len(result):,} sensitivity rows to {destination}")
     print("All outcomes in this sensitivity analysis are SIMULATED.")
 

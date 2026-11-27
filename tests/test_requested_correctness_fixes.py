@@ -103,6 +103,12 @@ def test_monthly_split_consumes_all_three_fractions(tmp_path):
     )
     saved = pd.read_parquet(series_path)
     assert saved.groupby("SPLIT").size().to_dict() == {"train": 12, "validation": 6, "test": 6}
+    assert set(saved.DATA_TYPE) == {"OBSERVED_DEMAND"}
+    assert "OUTCOME_TYPE" not in saved.columns
+    cohort = pd.read_csv(tmp_path / "cohort.csv")
+    monthly = pd.read_csv(tmp_path / "monthly_data_summary.csv")
+    assert set(cohort.DATA_TYPE) == {"OBSERVED_DEMAND"}
+    assert set(monthly.DATA_TYPE) == {"OBSERVED_DEMAND"}
 
 
 def test_inconsistent_split_fractions_raise_value_error(tmp_path):
@@ -167,3 +173,21 @@ def test_observed_and_simulated_output_labels_are_not_conflated(tmp_path):
     saved_inventory = pd.read_parquet(simulated_path)
     assert set(saved_inventory.OUTCOME_TYPE) == {"SIMULATED"}
     assert "DATA_TYPE" not in saved_inventory.columns
+
+
+
+def test_standalone_phase_adapters_use_correct_data_type_labels():
+    from src.scmd_forecasting import _stamp_observed_demand_frame as stamp_forecast
+    from src.scmd_reliability import _stamp_observed_demand_frame as stamp_reliability
+    from scripts.run_inventory_sensitivity import _stamp_simulated_outcomes
+
+    raw = pd.DataFrame({"VALUE": [1.0], "OUTCOME_TYPE": ["SIMULATED"]})
+    for stamped in (stamp_forecast(raw), stamp_reliability(raw)):
+        assert set(stamped.DATA_TYPE) == {"OBSERVED_DEMAND"}
+        assert "OUTCOME_TYPE" not in stamped.columns
+        assert set(stamped.DISCLAIMER) == {"Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."}
+
+    simulated = _stamp_simulated_outcomes(pd.DataFrame({"VALUE": [1.0], "DATA_TYPE": ["OBSERVED_DEMAND"]}))
+    assert set(simulated.OUTCOME_TYPE) == {"SIMULATED"}
+    assert set(simulated.STOCKOUTS_ARE_OBSERVED) == {0}
+    assert "DATA_TYPE" not in simulated.columns

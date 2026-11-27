@@ -9,6 +9,16 @@ import pandas as pd
 
 from src.set_forecasting.forecasting.model import train_and_predict
 
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
+
+
+def _stamp_observed_demand_frame(frame):
+    """Mark forecast-derived artifacts as observed-demand outputs."""
+    result = frame.copy().drop(columns=["OUTCOME_TYPE", "STOCKOUTS_ARE_OBSERVED"], errors="ignore")
+    result["DATA_TYPE"] = "OBSERVED_DEMAND"
+    result["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+    return result
+
 
 def run_forecasting(
     series_path="data/processed/scmd_monthly_series.parquet",
@@ -25,6 +35,9 @@ def run_forecasting(
         winsor_quantile=winsor_quantile,
     )
 
+    features = _stamp_observed_demand_frame(features)
+    predictions = _stamp_observed_demand_frame(predictions)
+    metrics = _stamp_observed_demand_frame(metrics)
     processed = Path(processed_dir)
     output = Path(output_dir)
     processed.mkdir(parents=True, exist_ok=True)
@@ -37,6 +50,8 @@ def run_forecasting(
         **report,
         "implementation": "src.set_forecasting.forecasting.model.train_and_predict",
         "compatibility_adapter": True,
+        "DATA_TYPE": "OBSERVED_DEMAND",
+        "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
     }
     return metrics, predictions, report
 

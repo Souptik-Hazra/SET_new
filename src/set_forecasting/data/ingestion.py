@@ -15,6 +15,7 @@ from .source import get_project_root, get_scmd_path, validate_scmd_header
 logger = logging.getLogger(__name__)
 KEY = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
 DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
 
 def compute_adi_cv2(values):
     values = np.asarray(values, dtype=float)
@@ -67,7 +68,9 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
         sum(try_cast(nullif(trim(TOTAL_QUANITY_IN_VMP_UNIT), '') AS DOUBLE)) AS NET_QUANTITY,
         count(*) FILTER (WHERE try_cast(nullif(trim(INDICATIVE_COST), '') AS DOUBLE) IS NULL)::BIGINT AS MISSING_OR_INVALID_COST_RECORDS,
         sum(try_cast(nullif(trim(INDICATIVE_COST), '') AS DOUBLE)) AS TOTAL_INDICATIVE_COST,
-        count(*) FILTER (WHERE try_cast(nullif(trim(INDICATIVE_COST), '') AS DOUBLE) < 0)::BIGINT AS NEGATIVE_COST_RECORDS
+        count(*) FILTER (WHERE try_cast(nullif(trim(INDICATIVE_COST), '') AS DOUBLE) < 0)::BIGINT AS NEGATIVE_COST_RECORDS,
+        'OBSERVED_DEMAND' AS DATA_TYPE,
+        'Demand observations are observed; inventory outcomes and stockout labels are SIMULATED.' AS DISCLAIMER
       FROM read_csv_auto('{escaped}', header=true, all_varchar=true, sample_size=-1)
       GROUP BY 1,2,3,5
     """
@@ -193,6 +196,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
             [indexed["PERIOD"] <= train_end, indexed["PERIOD"] <= validation_end],
             ["train", "validation"], default="test"
         )
+        indexed["DATA_TYPE"] = "OBSERVED_DEMAND"
+        indexed["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
 
         cohort_rows.append(dict(
             zip(KEY, map(str, key_values)),
@@ -234,6 +239,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         )
 
     cohort = pd.DataFrame(cohort_rows)
+    cohort["DATA_TYPE"] = "OBSERVED_DEMAND"
+    cohort["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
     monthly_summary = agg.groupby("YEAR_MONTH", as_index=False, observed=True).agg(
         SOURCE_RECORDS=("SOURCE_RECORDS", "sum"),
         POSITIVE_QUANTITY=("POSITIVE_QUANTITY", "sum"),
@@ -248,13 +255,15 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         monthly_summary["TOTAL_INDICATIVE_COST"] >
         monthly_summary["TOTAL_INDICATIVE_COST"].median() * 2.0
     )
+    monthly_summary["DATA_TYPE"] = "OBSERVED_DEMAND"
+    monthly_summary["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
     Path(cohort_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
     cohort_export = cohort.copy()
     monthly_export = monthly_summary.copy()
     for export in (cohort_export, monthly_export):
         export["DATA_TYPE"] = "OBSERVED_DEMAND"
-        export["DISCLAIMER"] = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
+        export["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
     cohort_export.to_csv(cohort_path, index=False)
     monthly_export.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
 
@@ -288,7 +297,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
             "the complete expanded cohort into pandas."
         ),
         "DATA_TYPE": "OBSERVED_DEMAND",
-        "disclaimer": "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED.",
+        "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
         "note": (
             "Missing month rows are flagged, not silently interpreted as observed zero demand. "
             "MODEL_DEMAND is NaN for unobserved months; net and negative movements remain "
@@ -330,4 +339,5 @@ if __name__ == "__main__":
     _, cohort, report = run_phase1_from_csv(args.source, load_series=False)
     print(json.dumps(report, indent=2, default=str))
     print("Cohort rows:", len(cohort))
+    print(OBSERVED_DEMAND_DISCLAIMER)
     print(DISCLAIMER)

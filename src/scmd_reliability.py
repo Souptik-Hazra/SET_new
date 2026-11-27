@@ -13,6 +13,15 @@ from src.set_forecasting.reliability.index import build_reliability_index
 
 KEY = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
 DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
+
+
+def _stamp_observed_demand_frame(frame):
+    """Mark reliability outputs as demand-derived, not simulated inventory outcomes."""
+    result = frame.copy().drop(columns=["OUTCOME_TYPE", "STOCKOUTS_ARE_OBSERVED"], errors="ignore")
+    result["DATA_TYPE"] = "OBSERVED_DEMAND"
+    result["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+    return result
 
 
 def calibrate_intervals(predictions, target_coverage=0.90, window=8, min_history=3):
@@ -32,7 +41,7 @@ def calibrate_intervals(predictions, target_coverage=0.90, window=8, min_history
     result["ROLLING_BIAS"] = result["ROLLING_BIAS_PRIOR"]
     result["ROLLING_COVERAGE"] = result["ROLLING_COVERAGE_PRIOR"]
     result["DRIFT_SIGNAL"] = (result["R_D"] > 0) | result["SHIFT_DETECTOR_FLAG"]
-    return result
+    return _stamp_observed_demand_frame(result)
 
 
 def run_reliability(
@@ -77,6 +86,7 @@ def run_reliability(
             CALIBRATED_COVERAGE=("CALIBRATED_COVERED", "mean"),
             DRIFT_RATE=("DRIFT_SIGNAL", "mean"),
         ).reset_index()
+    summary = _stamp_observed_demand_frame(summary)
     summary.to_csv(output / "tables" / "phase4_reliability_summary.csv", index=False)
     report = {
         "series_evaluated": len(summary),
@@ -85,7 +95,8 @@ def run_reliability(
         "window": window,
         "implementation": "src.set_forecasting.reliability.index.build_reliability_index",
         "compatibility_adapter": True,
-        "disclaimer": DISCLAIMER,
+        "DATA_TYPE": "OBSERVED_DEMAND",
+        "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
     }
     (output / "phase4_reliability_report.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"

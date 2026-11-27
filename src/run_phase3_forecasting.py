@@ -21,6 +21,7 @@ warnings.filterwarnings("ignore")
 
 logger = logging.getLogger(__name__)
 SEED = 42
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
 np.random.seed(SEED)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -303,7 +304,12 @@ def run_quantile_lgbm(train_df, val_df, test_df, split_map) -> tuple:
 
     # Save predictions and frozen model
     pred_path = os.path.join(PROJECT_ROOT,"data","processed","quantile_lgbm_test_predictions.csv")
-    test_df[["PERIOD","MEDICINE_ID",DEMAND_COL,"Q10","Q50","Q90"]].to_csv(pred_path, index=False)
+    prediction_export = test_df[["PERIOD","MEDICINE_ID",DEMAND_COL,"Q10","Q50","Q90"]].copy()
+    prediction_export["DATA_TYPE"] = "OBSERVED_DEMAND"
+    prediction_export["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+    prediction_export.to_csv(pred_path, index=False)
+    test_df["DATA_TYPE"] = "OBSERVED_DEMAND"
+    test_df["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
 
     model_path = os.path.join(PROJECT_ROOT,"data","processed","models","quantile_lgbm_global.pkl")
     with open(model_path, "wb") as f:
@@ -411,12 +417,16 @@ def main():
 
     # Combine and save
     metrics_df = pd.concat([m for m in all_metrics if len(m)>0], ignore_index=True)
+    metrics_df["DATA_TYPE"] = "OBSERVED_DEMAND"
+    metrics_df["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
     metrics_path = os.path.join(tables_dir,"phase3_forecast_metrics.csv")
     metrics_df.to_csv(metrics_path, index=False)
     logger.info(f"All metrics saved → {metrics_path}")
 
     # Gate 3
     gate = gate3_analysis(metrics_df)
+    gate["DATA_TYPE"] = "OBSERVED_DEMAND"
+    gate["disclaimer"] = OBSERVED_DEMAND_DISCLAIMER
     gate_path = os.path.join(output_dir,"phase3_gate3_analysis.json")
     with open(gate_path,"w") as f: json.dump(gate, f, indent=2, default=str)
 
