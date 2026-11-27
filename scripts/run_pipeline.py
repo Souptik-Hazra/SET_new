@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-import yaml
+from src.set_forecasting.config import get_config, validate_config
 
 from src.set_forecasting.data.ingestion import run_phase1_from_csv
 from src.set_forecasting.features.engineering import create_features, leakage_check
@@ -35,16 +35,7 @@ DEFAULT_PREDICTIONS = "data/processed/scmd_test_predictions.parquet"
 
 
 def _load_config():
-    path = Path("config/config.yaml")
-    if not path.is_file():
-        return {}
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if config is None:
-        return {}
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {path}")
-    return config
-
+    return validate_config(get_config())
 
 def _phase1(args, config):
     data = config.get("data", {})
