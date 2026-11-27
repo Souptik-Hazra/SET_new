@@ -22,4 +22,5 @@ jobs:
           tests/test_scmd_phase1.py
           tests/test_scmd_phases_2_4.py
           tests/test_pipeline_units.py
-          tests/test_set_forecasting_radcsr.py\n          tests/test_colab_runtime.py
+          tests/test_set_forecasting_radcsr.py
+          tests/test_colab_runtime.py
