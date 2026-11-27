@@ -618,3 +618,22 @@ def test_empirical_audit_join_preserves_every_matching_row():
     inventory["AVAILABLE_STOCK"] = 5.0
     merged = merge_scenario_inventory(scenarios, inventory)
     assert len(merged) == len(scenarios) == len(inventory)
+
+
+
+def test_full_cohort_colab_notebook_code_cells_compile():
+    import json
+    from pathlib import Path
+
+    notebook_path = Path(__file__).resolve().parents[1] / "notebooks" / "SET_Pharma_Colab_Pipeline.ipynb"
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    assert notebook["nbformat"] == 4
+    code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+    assert code_cells
+    for index, cell in enumerate(code_cells):
+        compile("".join(cell["source"]), f"{notebook_path}:cell-{index}", "exec")
+    source = "\n".join("".join(cell["source"]) for cell in code_cells)
+    assert "data/processed" in source and "'output'" in source
+    assert "colab_run_report.md" in source
+    assert "Empirical evidence collected. Claim evaluation pending review." in source
+    assert "REPO_COMMIT = '87eb570f8eda127018fa0eabd523344806532637'" in source
