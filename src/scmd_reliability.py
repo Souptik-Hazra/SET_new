@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-import yaml
+from src.set_forecasting.config import get_config, validate_config
 
 from src.set_forecasting.reliability.index import build_reliability_index
 
@@ -42,14 +42,12 @@ def run_reliability(
     target_coverage=None,
     window=None,
 ):
-    config_path = Path("config/config.yaml")
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-    reliability_config = (config or {}).get("reliability", {})
+    reliability_config = validate_config(get_config())["reliability"]
     target_coverage = float(
         target_coverage if target_coverage is not None
-        else reliability_config.get("target_coverage", 0.90)
+        else reliability_config["target_coverage"]
     )
-    window = int(window if window is not None else reliability_config.get("window", 8))
+    window = int(window if window is not None else reliability_config["window"])
 
     calibrated = calibrate_intervals(
         pd.read_parquet(prediction_path),
