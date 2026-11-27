@@ -84,10 +84,16 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         frame["PERIOD"] = pd.to_datetime(frame["PERIOD"])
         frame["MODEL_DEMAND"] = pd.to_numeric(frame["MODEL_DEMAND"], errors="coerce")
         frame = frame[(frame["SPLIT"] == "train") & frame["MODEL_DEMAND"].notna()] if "SPLIT" in frame else frame
-        monthly = frame.groupby(frame["PERIOD"].dt.to_period("M").astype(str))["MODEL_DEMAND"].sum()
+        frame["_MONTH"] = frame["PERIOD"].dt.to_period("M").astype(str)
+        series_keys = [key for key in KEYS if key in frame.columns]
+        if series_keys:
+            per_series = frame.groupby(series_keys + ["_MONTH"], dropna=False)["MODEL_DEMAND"].sum().reset_index()
+            monthly = per_series.groupby("_MONTH")["MODEL_DEMAND"].median()
+        else:
+            monthly = frame.groupby("_MONTH")["MODEL_DEMAND"].median()
         fig, ax = plt.subplots(figsize=(11, 5))
         ax.plot(monthly.index, monthly.values, marker="o", linewidth=1.5)
-        ax.set(title="Monthly SCMD quantity in the training cohort", xlabel="Month", ylabel="Recorded quantity (VMP units)")
+        ax.set(title="Median monthly quantity per medicine-unit series", xlabel="Month", ylabel="Median recorded quantity per series")
         ax.tick_params(axis="x", rotation=45)
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig01_monthly_scmd_quantity.png", "Figure 1"))
@@ -211,7 +217,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
 
     # 8. Inventory outcome summary, explicitly synthetic.
     try:
-        required = {"SCENARIO_ID", "STOCKOUT_LABEL", "SHORTAGE_QUANTITY", "SPLIT"}
+        required = {"SCENARIO_ID", "STOCKOUT_LABEL", "SHORTAGE_QUANTITY", "DEMAND"}
         if inventory is None or not required.issubset(inventory.columns):
             raise ValueError("simulated inventory artifact missing required columns")
         if scenarios is None or not {"PERIOD", "SCENARIO_ID", "SPLIT"}.issubset(scenarios.columns):
@@ -221,14 +227,19 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         frame = frame[(frame["SPLIT"] == "test")].dropna(subset=["STOCKOUT_LABEL"])
         if frame.empty:
             raise ValueError("no complete held-out simulated inventory horizons")
+        frame["SHORTAGE_FRACTION"] = np.where(
+            frame["DEMAND"].to_numpy(float) > 0,
+            frame["SHORTAGE_QUANTITY"].to_numpy(float) / np.maximum(frame["DEMAND"].to_numpy(float), 1e-12),
+            0.0,
+        )
         summary = frame.groupby("SCENARIO_ID").agg(
             simulated_stockout_rate=("STOCKOUT_LABEL", "mean"),
-            mean_shortage_quantity=("SHORTAGE_QUANTITY", "mean"))
+            mean_shortage_fraction=("SHORTAGE_FRACTION", "mean"))
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
         summary["simulated_stockout_rate"].plot(kind="bar", ax=axes[0])
-        summary["mean_shortage_quantity"].plot(kind="bar", ax=axes[1])
+        summary["mean_shortage_fraction"].plot(kind="bar", ax=axes[1])
         axes[0].set_ylabel("Simulated stockout rate")
-        axes[1].set_ylabel("Mean shortage quantity")
+        axes[1].set_ylabel("Mean monthly shortage / demand fraction")
         axes[1].set_xlabel("Synthetic stress scenario")
         axes[1].tick_params(axis="x", rotation=35)
         for ax in axes:
