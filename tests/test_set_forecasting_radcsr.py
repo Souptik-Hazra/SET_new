@@ -527,3 +527,52 @@ def test_radcsr_enforces_mean_coefficient_at_least_sigma_coefficient():
     with pytest.raises(ValueError, match="kappa_mu >= kappa_sigma"):
         radcsr_probability(8.0, 10.0, 13.0, 15.0, 2.0, .5,
                            kappa_sigma=.75, kappa_mu=.50)
+
+
+def test_empirical_monotonicity_audits_every_test_observation_and_scenario():
+    from src.set_forecasting.validation.empirical_monotonicity import audit_frame
+    rows = []
+    for scenario in ("S1_Stable", "S3_Drift"):
+        for i in range(3):
+            rows.append({
+                **dict(zip(KEYS, ["ORG", "000123", "U1"])),
+                "PERIOD": pd.Timestamp("2025-01-01") + pd.offsets.MonthBegin(i),
+                "SCENARIO_ID": scenario, "SPLIT": "test",
+                "Q10": 8.0, "Q50": 10.0, "Q90": 13.0,
+                "AVAILABLE_STOCK": 5.0, "LEAD_TIME_MONTHS": 2.0,
+                "R_REL": .2,
+            })
+    result = audit_frame(pd.DataFrame(rows), batch_size=2)
+    assert result["status"] == "PASS"
+    assert result["total_test_observations"] == 6
+    assert result["distribution_pass"] == 6
+    assert result["distribution_fail"] == 0
+    assert result["radcsr_pass"] == 6
+    assert result["radcsr_fail"] == 0
+    assert result["per_scenario"]["S1_Stable"]["observations"] == 3
+    assert result["per_scenario"]["S3_Drift"]["observations"] == 3
+
+
+def test_empirical_monotonicity_low_availability_failure_is_a_hard_failure(monkeypatch):
+    import src.set_forecasting.validation.empirical_monotonicity as audit
+    rows = pd.DataFrame([{
+        **dict(zip(KEYS, ["ORG", "000123", "U1"])),
+        "PERIOD": pd.Timestamp("2025-01-01"), "SCENARIO_ID": "S1_Stable",
+        "SPLIT": "test", "Q10": 8.0, "Q50": 10.0, "Q90": 13.0,
+        "AVAILABLE_STOCK": 5.0, "LEAD_TIME_MONTHS": 2.0, "R_REL": .2,
+    }])
+
+    def flat_probability(*args, **kwargs):
+        n = len(np.asarray(args[0]))
+        return pd.DataFrame({
+            "RADCSR_DISTRIBUTION_PROBABILITY": np.full(n, .5),
+            "RADCSR_PROBABILITY": np.full(n, .5),
+        })
+
+    monkeypatch.setattr(audit, "radcsr_probability", flat_probability)
+    result = audit.audit_frame(rows)
+    assert result["status"] == "FAIL"
+    assert result["distribution_fail"] == 1
+    assert result["radcsr_fail"] == 1
+    assert result["low_availability_failures"] == 1
+    assert result["violating_observation_keys"][0]["SCENARIO_ID"] == "S1_Stable"
