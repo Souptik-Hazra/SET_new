@@ -55,6 +55,7 @@ def test_generates_ten_figures_from_pipeline_artifacts(tmp_path):
     inventory = scenarios[["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER", "PERIOD", "SCENARIO_ID"]].copy()
     inventory["STOCKOUT_LABEL"] = [0, 1, 0, 1, 1, 0]
     inventory["SHORTAGE_QUANTITY"] = [0, 2, 0, 1, 3, 0]
+    inventory["DEMAND"] = [10, 12, 11, 10, 12, 11]
     _write_parquet(tmp_path, "data/processed/simulated_inventory.parquet", inventory)
 
     calibrated = inventory[["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER", "PERIOD", "SCENARIO_ID"]].copy()
