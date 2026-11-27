@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.special import ndtr
 
 KEYS = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
-DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events. SCMD contains no observed stock or supplier lead times."
+DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
 
 
 def infer_lead_time_distribution(q10, q50, q90, lead):
