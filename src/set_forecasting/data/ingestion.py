@@ -238,8 +238,14 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     )
     Path(cohort_path).parent.mkdir(parents=True, exist_ok=True)
     Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
-    cohort.to_csv(cohort_path, index=False)
-    monthly_summary.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
+    cohort_export = cohort.copy()
+    monthly_export = monthly_summary.copy()
+    for export in (cohort_export, monthly_export):
+        export["OUTCOME_TYPE"] = "SIMULATED"
+        export["STOCKOUTS_ARE_OBSERVED"] = 0
+        export["DISCLAIMER"] = DISCLAIMER
+    cohort_export.to_csv(cohort_path, index=False)
+    monthly_export.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
 
     report = {
         "source": "NHSBSA Secondary Care Medicines Indicative Price",
