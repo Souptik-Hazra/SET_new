@@ -103,5 +103,5 @@ def test_missing_artifacts_are_reported_without_fabricated_figures(tmp_path):
     assert generated == []
     report = json.loads((tmp_path / "output/figures/figure_generation_report.json").read_text())
     assert report["generated_count"] == 0
-    assert len(report["skipped"]) == 10
+    assert len(report["skipped"]) == 11
     assert "illustrative" not in json.dumps(report).lower()
