@@ -657,7 +657,7 @@ def test_missing_month_uses_explicit_forecast_demand_only_for_simulation_and_cen
 
 
 def test_pipeline_stamps_every_output_csv_with_simulation_disclaimer(tmp_path):
-    from src.set_forecasting.pipeline import _stamp_output_csvs
+    from src.set_forecasting.pipeline import _stamp_output_csvs, _stamp_simulated_frame
     tables = tmp_path / "tables"
     tables.mkdir()
     pd.DataFrame({"METHOD": ["RADCSR"], "N": [10]}).to_csv(
@@ -670,6 +670,10 @@ def test_pipeline_stamps_every_output_csv_with_simulation_disclaimer(tmp_path):
     assert result.loc[0, "DISCLAIMER"] == (
         "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
     )
+    parquet_frame = _stamp_simulated_frame(pd.DataFrame({"METHOD": ["RADCSR"]}))
+    assert parquet_frame.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
+    assert parquet_frame.loc[0, "STOCKOUTS_ARE_OBSERVED"] == 0
+    assert parquet_frame.loc[0, "DISCLAIMER"] == result.loc[0, "DISCLAIMER"]
 
 
 
