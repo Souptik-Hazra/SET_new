@@ -614,6 +614,11 @@ def test_ingestion_persists_missing_month_model_demand_as_nan(tmp_path):
     adi, _ = compute_adi_cv2(observed)
     assert adi == 1.0
     assert cohort.iloc[0].N_OBSERVED == 23
+    cohort_export = pd.read_csv(tmp_path / "cohort.csv")
+    assert cohort_export.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
+    assert cohort_export.loc[0, "DISCLAIMER"] == (
+        "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+    )
 
 
 
