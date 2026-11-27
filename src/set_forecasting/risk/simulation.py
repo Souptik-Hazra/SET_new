@@ -272,27 +272,34 @@ def align_primary_method_observations(probabilities, methods=PRIMARY_RISK_METHOD
     report_rows = []
     for scenario in scenarios:
         group = primary[primary.SCENARIO_ID == scenario]
-        key_sets = {}
+        method_frames = {}
         for method in methods:
             method_rows = group[group.METHOD == method]
             if method_rows.empty:
                 raise ValueError(f"Primary method {method!r} has no rows in scenario {scenario!r}")
-            key_sets[method] = set(map(tuple, method_rows[keys].itertuples(index=False, name=None)))
-        common = set.intersection(*(key_sets[method] for method in methods))
-        if not common:
+            method_frames[method] = method_rows
+        common_keys = method_frames[methods[0]][keys].drop_duplicates()
+        for method in methods[1:]:
+            common_keys = common_keys.merge(
+                method_frames[method][keys].drop_duplicates(),
+                on=keys, how="inner", validate="one_to_one"
+            )
+        if common_keys.empty:
             raise ValueError(f"No common evaluation keys across primary methods in scenario {scenario!r}")
         for method in methods:
-            method_rows = group[group.METHOD == method]
-            mask = method_rows[keys].apply(tuple, axis=1).isin(common)
-            aligned = method_rows.loc[mask].copy()
+            method_rows = method_frames[method]
+            aligned = method_rows.merge(
+                common_keys, on=keys, how="inner", validate="one_to_one"
+            )
             aligned_frames.append(aligned)
+            input_count = len(method_rows)
             report_rows.append({
                 "SCENARIO_ID": scenario,
                 "METHOD": method,
-                "INPUT_KEYS": len(key_sets[method]),
-                "ALIGNED_KEYS": len(common),
-                "DROPPED_KEYS": len(key_sets[method] - common),
-                "MISMATCH_KEYS": len(key_sets[method] - common),
+                "INPUT_KEYS": input_count,
+                "ALIGNED_KEYS": len(aligned),
+                "DROPPED_KEYS": input_count - len(aligned),
+                "MISMATCH_KEYS": input_count - len(aligned),
                 "OUTCOME_TYPE": "SIMULATED",
                 "DISCLAIMER": "Inventory outcomes are SIMULATED. Stockout labels are not observed events.",
             })
@@ -300,7 +307,6 @@ def align_primary_method_observations(probabilities, methods=PRIMARY_RISK_METHOD
         raise ValueError("No primary risk method observations were available")
     aligned = pd.concat(aligned_frames, ignore_index=True)
     return aligned, pd.DataFrame(report_rows)
-
 
 def brier_by_method(probabilities,inventory):
     keys=KEYS+["PERIOD","SCENARIO_ID"]
