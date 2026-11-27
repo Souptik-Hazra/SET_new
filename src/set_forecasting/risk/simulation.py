@@ -448,6 +448,12 @@ def calibrate_risk_probabilities(probabilities,inventory,min_validation_rows=30)
     """Fit per-scenario/method isotonic calibrators on validation labels only."""
     from sklearn.isotonic import IsotonicRegression
     keys=KEYS+["PERIOD","SCENARIO_ID"]
+    duplicate_keys = keys + ["METHOD"]
+    if probabilities.duplicated(duplicate_keys).any():
+        sample = probabilities.loc[
+            probabilities.duplicated(duplicate_keys, keep=False), duplicate_keys
+        ].head(5).to_dict("records")
+        raise ValueError(f"Calibration input contains duplicate method/evaluation keys: {sample}")
     x=probabilities.merge(inventory[keys+["STOCKOUT_LABEL"]],on=keys,how="inner",validate="many_to_one")
     x=x.dropna(subset=["STOCKOUT_LABEL"])
     x["RAW_SHORTAGE_PROBABILITY"]=x.SHORTAGE_PROBABILITY
