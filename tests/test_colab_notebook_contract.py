@@ -48,6 +48,9 @@ def test_notebook_imports_the_runtime_and_uses_all_stage_entrypoints():
 def test_notebook_branch_and_dataset_paths_match_repository_contract():
     notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
     assert 'BRANCH = "feature/colab-pipeline-execution"' in notebook_source
+    assert 'DEFAULT_NOTEBOOK_COMMIT = "19eda52a5a5527178e6fa5a7dce21f73c0d31aac"' in notebook_source
+    assert 'git", "checkout", NOTEBOOK_COMMIT' in notebook_source
+    assert "WARNING: NOTEBOOK_COMMIT override active" in notebook_source
     assert 'REPO_DIR = Path("/content/SET_new")' in notebook_source
     assert 'DRIVE_RAW_CSV = Path("/content/drive/MyDrive/SET_Pharma/data/raw/combined_secondary_care_medicines.csv")' in notebook_source
     assert 'LOCAL_RAW_CSV = REPO_DIR / "data" / "raw" / "combined_secondary_care_medicines.csv"' in notebook_source
@@ -66,8 +69,10 @@ def test_runtime_artifact_contracts_match_python_pipeline_outputs():
 
     for artifact in literal_tuple_from_module(helper, "INGESTION_ARTIFACTS"):
         assert Path(artifact).name in ingestion, f"Ingestion output not found: {artifact}"
+    ingestion_output_names = {Path(item).name for item in literal_tuple_from_module(helper, "INGESTION_ARTIFACTS")}
     for artifact in literal_tuple_from_module(helper, "MODEL_ARTIFACTS"):
-        assert Path(artifact).name in pipeline, f"Model output not found: {artifact}"
+        source = ingestion if Path(artifact).name in ingestion_output_names else pipeline
+        assert Path(artifact).name in source, f"Model output not found: {artifact}"
     for artifact in literal_tuple_from_module(helper, "MATH_ARTIFACTS"):
         assert Path(artifact).name in mathematical, f"Validation output not found: {artifact}"
 
@@ -77,6 +82,9 @@ def test_notebook_and_helper_use_same_stage_parameters():
     helper = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
     assert "min_periods=MIN_PERIODS" in notebook_source
     assert "min_nonzero=MIN_NONZERO" in notebook_source
+    assert "train_frac=TRAIN_FRAC" in notebook_source
+    assert "val_frac=VALIDATION_FRAC" in notebook_source
+    assert "test_frac=TEST_FRAC" in notebook_source
     assert "bootstrap=BOOTSTRAP_RESAMPLES" in notebook_source
     assert "seed=RANDOM_SEED" in notebook_source
     assert "def run_models(" in helper

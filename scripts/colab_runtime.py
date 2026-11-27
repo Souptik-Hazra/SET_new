@@ -24,6 +24,7 @@ INGESTION_ARTIFACTS = (
     "data/processed/scmd_monthly_aggregated.parquet",
     "data/processed/scmd_monthly_series.parquet",
     "output/tables/cohort_inclusion_report.csv",
+    "output/tables/monthly_data_summary.csv",
     "output/phase1_diagnostics.json",
 )
 MODEL_ARTIFACTS = (
@@ -37,11 +38,27 @@ MODEL_ARTIFACTS = (
     "data/processed/raw_risk_probabilities.parquet",
     "data/processed/simulated_inventory.parquet",
     "data/processed/radcsr_risk_details.parquet",
+    "output/resolved_config.json",
+    "output/radcsr_monotonicity_audit.json",
     "output/pipeline_report.json",
+    "output/tables/cohort_inclusion_report.csv",
+    "output/tables/monthly_data_summary.csv",
     "output/tables/forecast_provenance.csv",
     "output/tables/forecast_source_summary.csv",
+    "output/tables/forecast_metrics.csv",
+    "output/tables/per_series_forecast_metrics.csv",
+    "output/tables/per_series_outlier_summary.csv",
+    "output/tables/reliability_baseline_metrics.csv",
+    "output/tables/reliability_signal_correlations.csv",
     "output/tables/observation_counts.csv",
     "output/tables/bootstrap_observation_counts.csv",
+    "output/tables/risk_brier_by_scenario.csv",
+    "output/tables/risk_calibration_metrics.csv",
+    "output/tables/phase7_ablation_metrics.csv",
+    "output/tables/phase6_inventory_scenarios.csv",
+    "output/tables/radcsr_vs_baselines_bootstrap_holm.csv",
+    "output/tables/s5_bias_radcsr_vs_static_wasserstein.csv",
+    "output/tables/clinical_priority_ranking_comparison.csv",
     "output/final_verdict.md",
 )
 MATH_ARTIFACTS = (
@@ -222,10 +239,14 @@ def run_stage(
     return {"stage": stage, "status": "COMPLETED", "result": result}
 
 
-def ingestion_fingerprint(source_csv: str | Path, min_periods: int, min_nonzero: int) -> str:
+def ingestion_fingerprint(
+    source_csv: str | Path, min_periods: int, min_nonzero: int,
+    train_frac: float = 0.60, val_frac: float = 0.20, test_frac: float = 0.20,
+) -> str:
     return run_fingerprint(
         source_csv,
-        {"stage": "ingestion", "min_periods": min_periods, "min_nonzero": min_nonzero},
+        {"stage": "ingestion", "min_periods": min_periods, "min_nonzero": min_nonzero,
+         "train_frac": train_frac, "val_frac": val_frac, "test_frac": test_frac},
         code_paths=(
             "src/set_forecasting/data/ingestion.py",
             "src/set_forecasting/data/source.py",
@@ -270,18 +291,24 @@ def run_ingestion(
     *,
     min_periods: int = 18,
     min_nonzero: int = 6,
+    train_frac: float = 0.60,
+    val_frac: float = 0.20,
+    test_frac: float = 0.20,
     force: bool = False,
 ):
     assert_supported_python()
     from src.set_forecasting.data.ingestion import run_phase1_from_csv
 
-    fingerprint = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
+    fingerprint = ingestion_fingerprint(source_csv, min_periods, min_nonzero, train_frac, val_frac, test_frac)
     return run_stage(
         "ingestion", fingerprint, INGESTION_ARTIFACTS,
         lambda: run_phase1_from_csv(
             source=str(Path(source_csv).resolve()),
             min_periods=min_periods,
             min_nonzero=min_nonzero,
+            train_frac=train_frac,
+            val_frac=val_frac,
+            test_frac=test_frac,
             load_series=False,
         ),
         force=force,
@@ -294,6 +321,9 @@ def run_models(
     *,
     min_periods: int = 18,
     min_nonzero: int = 6,
+    train_frac: float = 0.60,
+    val_frac: float = 0.20,
+    test_frac: float = 0.20,
     bootstrap: int = 2000,
     seed: int = 42,
     force: bool = False,
@@ -301,7 +331,7 @@ def run_models(
     assert_supported_python()
     from src.set_forecasting.pipeline import run_model_pipeline
 
-    ingestion_fp = ingestion_fingerprint(source_csv, min_periods, min_nonzero)
+    ingestion_fp = ingestion_fingerprint(source_csv, min_periods, min_nonzero, train_frac, val_frac, test_frac)
     require_stage("ingestion", ingestion_fp, INGESTION_ARTIFACTS)
     fingerprint = model_fingerprint(bootstrap, seed)
     return run_stage(

@@ -5,6 +5,50 @@ width from recent empirical coverage. EnbPI uses past residual quantiles.
 """
 import numpy as np
 import pandas as pd
+
+
+def _aci_simplified_radius(prior, alpha, base):
+    """ACI_simplified uses a scalar clipped alpha update and a rolling residual quantile.
+
+    It omits the full published method's online calibration guarantees and
+    broader adaptive-conformal algorithmic machinery.
+    """
+    return float(np.quantile(prior, 1-alpha, method="higher")) if len(prior) >= 3 else base
+
+
+def _dtaci_simplified_radius(prior, alphas, misses, window, target, base):
+    """DtACI_simplified dispatches among three scalar alpha candidates by recent coverage error.
+
+    It is a compact heuristic, not the complete published DtACI dispatch and
+    candidate-controller procedure.
+    """
+    candidates = []
+    for j, alpha in enumerate(alphas):
+        radius = float(np.quantile(prior, 1-alpha, method="higher")) if len(prior) >= 3 else base
+        recent = np.asarray(misses[j][-window:], float)
+        coverage = 1-float(np.mean(recent)) if len(recent) else target
+        candidates.append((abs(coverage-target), radius, j))
+    return min(candidates, key=lambda item: (item[0], item[1])), candidates
+
+
+def _adapi_simplified_radius(base, coverage, target):
+    """AdaPI_simplified scales nominal width using clipped recent-coverage error.
+
+    It is a lightweight width heuristic, not the full published adaptive
+    prediction-interval algorithm or its formal coverage procedure.
+    """
+    return base * float(np.clip(1+(target-coverage)*2, .5, 3.))
+
+
+def _enbpi_simplified_radius(prior, target, base):
+    """EnbPI_simplified uses a rolling quantile of absolute past residuals.
+
+    It does not implement the published ensemble bootstrap predictor,
+    bootstrap residual construction or EnbPI update procedure.
+    """
+    return float(np.quantile(prior, target, method="higher")) if len(prior) >= 3 else base
+
+
 KEYS=["ODS_CODE","VMP_SNOMED_CODE","UNIT_OF_MEASURE_IDENTIFIER"]
 
 def interval_baselines(predictions,target_coverage=.90,window=8):
@@ -15,28 +59,21 @@ def interval_baselines(predictions,target_coverage=.90,window=8):
         errors=np.abs(y-q50);history=[];alpha_aci=alpha_target;gamma=.05
         dt_alphas=np.array([.05,.10,.15],dtype=float)
         dt_misses=[[],[],[]];coverage_history=[]
-        methods={m:[] for m in ["Static","RollingQuantile","EWMA","ACI","DtACI","AdaPI","EnbPI"]}
+        methods={m:[] for m in ["Static","RollingQuantile","EWMA","ACI_simplified","DtACI_simplified","AdaPI_simplified","EnbPI_simplified"]}
         for i in range(len(g)):
             base=max((q90[i]-q10[i])/2*1.282,1e-6)
             prior=np.asarray(history[-window:],float)
             rq=float(np.quantile(prior,target_coverage,method="higher")) if len(prior)>=2 else base
             ew=float(pd.Series(prior).ewm(alpha=.25,adjust=False).mean().iloc[-1]*1.645) if len(prior) else base
-            a_radius=float(np.quantile(prior,1-alpha_aci,method="higher")) if len(prior)>=3 else base
-            # Dispatch among three independent ACI controllers using their past coverage.
-            dt_candidates=[]
-            for j,a in enumerate(dt_alphas):
-                radius=float(np.quantile(prior,1-a,method="higher")) if len(prior)>=3 else base
-                recent=np.asarray(dt_misses[j][-window:],float)
-                cov=1-float(np.mean(recent)) if len(recent) else target_coverage
-                dt_candidates.append((abs(cov-target_coverage),radius,j))
-            _,dt_radius,selected=min(dt_candidates,key=lambda z:(z[0],z[1]))
-            # AdaPI scales its nominal width according to prior empirical coverage error.
+            a_radius=_aci_simplified_radius(prior,alpha_aci,base)
+            dt_best,dt_candidates=_dtaci_simplified_radius(prior,dt_alphas,dt_misses,window,target_coverage,base)
+            _,dt_radius,selected=dt_best
             prior_cov=float(np.mean(coverage_history[-window:])) if coverage_history else target_coverage
-            ada_radius=base*float(np.clip(1+(target_coverage-prior_cov)*2,.5,3.))
-            enb=float(np.quantile(prior,target_coverage,method="higher")) if len(prior)>=3 else base
+            ada_radius=_adapi_simplified_radius(base,prior_cov,target_coverage)
+            enb=_enbpi_simplified_radius(prior,target_coverage,base)
             radii={"Static":base,"RollingQuantile":max(base,rq),"EWMA":max(base,ew),
-                "ACI":max(1e-6,a_radius),"DtACI":max(1e-6,dt_radius),
-                "AdaPI":max(1e-6,ada_radius),"EnbPI":max(1e-6,enb)}
+                "ACI_simplified":max(1e-6,a_radius),"DtACI_simplified":max(1e-6,dt_radius),
+                "AdaPI_simplified":max(1e-6,ada_radius),"EnbPI_simplified":max(1e-6,enb)}
             for name,radius in radii.items():
                 methods[name].append((max(0,q50[i]-radius),q50[i]+radius))
             # Only after intervals are fixed do we reveal this period's observation.

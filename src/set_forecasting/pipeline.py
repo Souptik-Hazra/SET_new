@@ -16,9 +16,22 @@ from .risk.simulation import make_scenarios,simulate_inventory,risk_baseline_pro
 from .risk.clinical import load_verified_ven_mapping,compare_clinical_priority
 
 
-def _stamp_simulated_frame(frame):
-    """Attach the common simulation boundary to an exported research table."""
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
+
+
+def _stamp_observed_demand_frame(frame):
+    """Label demand-derived outputs without implying observed inventory outcomes."""
     result = frame.copy()
+    result = result.drop(columns=["OUTCOME_TYPE", "STOCKOUTS_ARE_OBSERVED"], errors="ignore")
+    result["DATA_TYPE"] = "OBSERVED_DEMAND"
+    result["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+    return result
+
+
+def _stamp_simulated_frame(frame):
+    """Attach the explicit simulated inventory/stockout outcome boundary."""
+    result = frame.copy()
+    result = result.drop(columns=["DATA_TYPE"], errors="ignore")
     result["OUTCOME_TYPE"] = "SIMULATED"
     result["STOCKOUTS_ARE_OBSERVED"] = 0
     result["DISCLAIMER"] = DISCLAIMER
@@ -26,14 +39,28 @@ def _stamp_simulated_frame(frame):
 
 
 def _stamp_output_csvs(output_dir):
-    """Stamp every exported research table with its simulated-outcome boundary."""
+    """Apply observed-demand or simulated-outcome labels by table semantics."""
+    observed_tables = {
+        "forecast_provenance.csv", "forecast_source_summary.csv", "forecast_metrics.csv",
+        "per_series_forecast_metrics.csv", "per_series_outlier_summary.csv",
+        "reliability_baseline_metrics.csv", "reliability_signal_correlations.csv",
+    }
+    simulated_tables = {
+        "observation_counts.csv", "bootstrap_observation_counts.csv",
+        "risk_brier_by_scenario.csv", "risk_calibration_metrics.csv",
+        "phase7_ablation_metrics.csv", "phase6_inventory_scenarios.csv",
+        "radcsr_vs_baselines_bootstrap_holm.csv",
+        "s5_bias_radcsr_vs_static_wasserstein.csv",
+        "clinical_priority_ranking_comparison.csv",
+    }
     tables_dir = Path(output_dir) / "tables"
     for csv_path in tables_dir.glob("*.csv"):
+        if csv_path.name not in observed_tables | simulated_tables:
+            continue
         table = pd.read_csv(csv_path)
-        table["OUTCOME_TYPE"] = "SIMULATED"
-        table["STOCKOUTS_ARE_OBSERVED"] = 0
-        table["DISCLAIMER"] = DISCLAIMER
-        table.to_csv(csv_path, index=False)
+        stamped = (_stamp_observed_demand_frame(table) if csv_path.name in observed_tables
+                   else _stamp_simulated_frame(table))
+        stamped.to_csv(csv_path, index=False)
 
 
 def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",output_dir="output",processed_dir="data/processed",seed=None,n_boot=2000):
@@ -126,7 +153,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             source_summary.FORECAST_OBSERVATION_SHARE
         )),
     })
-    _stamp_simulated_frame(features).to_parquet(proc/"features.parquet",index=False);_stamp_simulated_frame(pred).to_parquet(proc/"forecasts.parquet",index=False)
+    _stamp_observed_demand_frame(features).to_parquet(proc/"features.parquet",index=False);_stamp_observed_demand_frame(pred).to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
     test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
     per_series=[]
@@ -146,7 +173,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     observed_pred = pred[~pred.get("OBSERVATION_MISSING", pd.Series(False, index=pred.index)).fillna(True).astype(bool)].copy()
     reliability_observed = build_reliability_index(
         observed_pred, target_coverage=float(rel_cfg.get("target_coverage",.90)),
-        window=int(rel_cfg.get("window",8)), weights=rel_cfg.get("weights")
+        window=int(rel_cfg.get("window",8)), weights=rel_cfg.get("weights"), period_col="PERIOD"
     )
     reliability_columns = [
         column for column in reliability_observed.columns
@@ -170,8 +197,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             reliability[column] = reliability.groupby(KEYS, sort=False, dropna=False)[column].ffill()
             if column in {"R_E", "R_B", "R_B_SYMMETRIC", "R_B_OVER", "R_B_UNDER", "R_C", "R_D", "R_UNRELIABILITY", "R_REL", "SHIFT_DETECTOR_FLAG"}:
                 reliability[column] = reliability[column].fillna(0)
-    _stamp_simulated_frame(reliability).to_parquet(proc/"reliability.parquet",index=False)
-    intervals=interval_baselines(observed_pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));_stamp_simulated_frame(intervals).to_parquet(proc/"reliability_baselines.parquet",index=False)
+    _stamp_observed_demand_frame(reliability).to_parquet(proc/"reliability.parquet",index=False)
+    intervals=interval_baselines(observed_pred,target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)));_stamp_observed_demand_frame(intervals).to_parquet(proc/"reliability_baselines.parquet",index=False)
     interval_test=intervals[intervals.SPLIT=="test"] if "SPLIT" in intervals else intervals
     interval_summary=interval_test.groupby("METHOD",as_index=False).agg(PICP=("COVERED","mean"),MPIW=("WIDTH","mean"))
     interval_summary.to_csv(out/"tables/reliability_baseline_metrics.csv",index=False)
@@ -196,7 +223,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     scenarios=make_scenarios(scenario_input,seed,lead_times=configured_lead_times)
     scenario_rel=[]
     for _,g in scenarios.groupby("SCENARIO_ID",sort=False):
-        scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights")))
+        scenario_rel.append(build_reliability_index(g.assign(MODEL_DEMAND=g.SCENARIO_DEMAND),target_coverage=float(rel_cfg.get("target_coverage",.90)),window=int(rel_cfg.get("window",8)),weights=rel_cfg.get("weights"),period_col="PERIOD"))
     scenarios=pd.concat(scenario_rel,ignore_index=True)
     _stamp_simulated_frame(scenarios).to_parquet(proc/"scenario_streams.parquet",index=False)
     inventory=simulate_inventory(scenarios,service_level=float(inv_cfg.get("service_level",.95)),
@@ -211,7 +238,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             kappa_sigma=radcsr_ks,kappa_mu=radcsr_km,
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0))
-        base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"] + (["FORECAST_MODEL"] if "FORECAST_MODEL" in g else [])].reset_index(drop=True)
+        base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS","Q10","Q50","Q90"] + (["FORECAST_MODEL"] if "FORECAST_MODEL" in g else [])].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g,
             kappa_sigma=radcsr_ks,
@@ -245,8 +272,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     calibrated=pd.concat([calibrated_primary,calibrated_ablations],ignore_index=True)
     primary_test = calibrated_primary[calibrated_primary.SPLIT == "test"].copy()
     primary_test, bootstrap_observation_counts = align_primary_method_observations(primary_test)
-    if not bootstrap_observation_counts.empty:
-        bootstrap_observation_counts.to_csv(out/"tables/bootstrap_observation_counts.csv", index=False)
+    bootstrap_observation_counts.to_csv(out/"tables/bootstrap_observation_counts.csv", index=False)
     eval_prob = pd.concat([
         primary_test,
         calibrated_ablations[calibrated_ablations.SPLIT == "test"]
@@ -276,9 +302,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     primary_eval = primary_test.drop(columns=["STOCKOUT_LABEL"], errors="ignore")
     stats=series_bootstrap_holm(primary_eval,inventory,n_boot,seed)
     stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)
-    if len(stats):
-        stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(
-            out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
+    s5_bias = (stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))]
+               if len(stats) else pd.DataFrame(columns=stats.columns))
+    s5_bias.to_csv(out/"tables/s5_bias_radcsr_vs_static_wasserstein.csv",index=False)
     clinical_status="Not computed: no verified clinical VEN mapping supplied."
     ven_path=root / "data" / "reference" / "clinical_ven_mapping.csv"
     if ven_path.exists():
@@ -294,6 +320,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         clinical_status={"mapping_file":str(ven_path),"mapped_medicines":int(mapping.VMP_SNOMED_CODE.nunique()),
             "evaluated_medicines":len(evaluated_codes),"mapping_coverage":1.0,
             "ranking_changed":bool(clinical_summary.RANKING_CHANGED.any())}
+    else:
+        pd.DataFrame(columns=["VEN_CLASS", "METHOD", "RANK", "RANKING_CHANGED"]).to_csv(
+            out/"tables/clinical_priority_ranking_comparison.csv", index=False)
     test_joined=joined[joined.SPLIT=="test"]
     if test_joined.empty:
         raise RuntimeError("No held-out test rows available for RADCSR monotonicity acceptance gate.")
@@ -308,6 +337,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
             float(row.AVAILABLE_STOCK),float(row.LEAD_TIME_MONTHS),**mono_cfg))
     mono_pass=all(item["raw_pass"] for item in audit_rows)
     mono={"gate_status":"PASS" if mono_pass else "FAIL",
+          "OUTCOME_TYPE":"SIMULATED","STOCKOUTS_ARE_OBSERVED":0,"DISCLAIMER":DISCLAIMER,
           "cases_checked":len(audit_rows),"all_raw_curves_monotone":mono_pass,
           "method":"analytic_monotone_risk_uplift_no_posthoc_envelope",
           "cases":[{k:v for k,v in item.items() if k!="probability_curve"} for item in audit_rows]}
@@ -328,6 +358,10 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     report={"runtime":{"python_version":platform.python_version(),
         "python_supported":platform.python_version().startswith("3.11."),
         "python_override":os.environ.get("SET_ALLOW_UNSUPPORTED_PYTHON")=="1"},
+      "DATA_TYPE":"MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES",
+      "observed_demand_disclaimer":OBSERVED_DEMAND_DISCLAIMER,
+      "simulated_outcomes_disclaimer":DISCLAIMER,
+      "baseline_name_qualification":{"risk":"ACI_simplified","interval":["ACI_simplified","DtACI_simplified","AdaPI_simplified","EnbPI_simplified"]},
       "forecast":forecast_report,"median_per_series_wape":float(per_series.WAPE.median()) if len(per_series) else None,
       "outlier_995_count":outlier_count,"series_with_outliers":int((outlier_summary.OUTLIER_COUNT>0).sum()),"prediction_rows":len(pred),"reliability_rows":len(reliability),
       "reliability_baseline_rows":len(intervals),
@@ -362,8 +396,9 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     verdict = [
         "# Final Research Verdict (C1–C6)",
         "",
+        OBSERVED_DEMAND_DISCLAIMER,
         DISCLAIMER,
-        "This verdict is generated from the current pipeline run. All inventory and stockout outcomes are simulated.",
+        "This verdict is generated from the current pipeline run. Demand observations are observed; inventory and stockout outcomes are simulated.",
         "",
         f"## C1 — Forecasting performance",
         f"Forecast model: {forecast_report.get('model', 'not reported')}. Test metrics are in `output/tables/forecast_metrics.csv`; no universal pass threshold is asserted.",

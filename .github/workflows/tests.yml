@@ -18,6 +18,12 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.txt
       - run: python -m compileall -q src scripts tests
+      - name: Run post-hoc empirical monotonicity verifier on synthetic fixture
+        run: >-
+          python -m src.set_forecasting.validation.empirical_monotonicity
+          --synthetic-fixture
+          --report-path /tmp/empirical_monotonicity_audit.json
+          --violations-path /tmp/empirical_monotonicity_violations.csv
       - name: Run active SCMD, RADCSR, Colab and visualization tests
         run: >-
           python -m pytest -q
@@ -27,6 +33,7 @@ jobs:
           tests/test_colab_runtime.py
           tests/test_colab_notebook_contract.py
           tests/test_visualization.py
+          tests/test_requested_correctness_fixes.py
 
   legacy-compatibility-tests:
     runs-on: ubuntu-latest

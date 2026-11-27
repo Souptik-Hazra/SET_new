@@ -51,7 +51,7 @@ def test_reliability_baselines_are_all_exported():
     x=sample().tail(10).copy()
     x["Q10"]=x.MODEL_DEMAND-2;x["Q50"]=x.MODEL_DEMAND-1;x["Q90"]=x.MODEL_DEMAND+2
     out=interval_baselines(x)
-    assert set(out.METHOD.unique())=={"Static","RollingQuantile","EWMA","ACI","DtACI","AdaPI","EnbPI"}
+    assert set(out.METHOD.unique())=={"Static","RollingQuantile","EWMA","ACI_simplified","DtACI_simplified","AdaPI_simplified","EnbPI_simplified"}
 
 def test_radcsr_monotone_probability_for_fixed_case():
     r=np.linspace(0,1,21)
@@ -83,7 +83,7 @@ def test_risk_baseline_interface_returns_six_methods():
     s=make_scenarios(x);inv=simulate_inventory(s)
     frame=s.merge(inv[KEYS+["PERIOD","SCENARIO_ID","AVAILABLE_STOCK","DEMAND"]],on=KEYS+["PERIOD","SCENARIO_ID"])
     p=risk_baseline_probabilities(frame)
-    assert set(p.METHOD.unique())=={"Static","RollingQuantile","EWMA","ACI","MonteCarlo","WassersteinDRO"}
+    assert set(p.METHOD.unique())=={"Static","RollingQuantile","EWMA","ACI_simplified","MonteCarlo","WassersteinDRO"}
     assert p.SHORTAGE_PROBABILITY.between(0,1).all()
 
 def test_end_to_end_small_cohort(tmp_path):
@@ -616,9 +616,10 @@ def test_ingestion_persists_missing_month_model_demand_as_nan(tmp_path):
     assert adi == 1.0
     assert cohort.iloc[0].N_OBSERVED == 23
     cohort_export = pd.read_csv(tmp_path / "cohort.csv")
-    assert cohort_export.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
+    assert cohort_export.loc[0, "DATA_TYPE"] == "OBSERVED_DEMAND"
+    assert "OUTCOME_TYPE" not in cohort_export.columns
     assert cohort_export.loc[0, "DISCLAIMER"] == (
-        "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+        "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
     )
 
 
@@ -656,19 +657,26 @@ def test_missing_month_uses_explicit_forecast_demand_only_for_simulation_and_cen
     assert inventory.loc[inventory.PERIOD == previous_period, "STOCKOUT_LABEL"].isna().all()
 
 
-def test_pipeline_stamps_every_output_csv_with_simulation_disclaimer(tmp_path):
+def test_pipeline_stamps_csvs_by_observed_or_simulated_semantics(tmp_path):
     from src.set_forecasting.pipeline import _stamp_output_csvs, _stamp_simulated_frame
     tables = tmp_path / "tables"
     tables.mkdir()
-    pd.DataFrame({"METHOD": ["RADCSR"], "N": [10]}).to_csv(
-        tables / "example.csv", index=False
+    pd.DataFrame({"METHOD": ["RADCSR"], "BRIER_SCORE": [.1]}).to_csv(
+        tables / "risk_brier_by_scenario.csv", index=False
     )
+    pd.DataFrame({"MAE": [1.2]}).to_csv(tables / "forecast_metrics.csv", index=False)
     _stamp_output_csvs(tmp_path)
-    result = pd.read_csv(tables / "example.csv")
+    result = pd.read_csv(tables / "risk_brier_by_scenario.csv")
     assert result.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
     assert result.loc[0, "STOCKOUTS_ARE_OBSERVED"] == 0
     assert result.loc[0, "DISCLAIMER"] == (
         "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+    )
+    observed = pd.read_csv(tables / "forecast_metrics.csv")
+    assert observed.loc[0, "DATA_TYPE"] == "OBSERVED_DEMAND"
+    assert "OUTCOME_TYPE" not in observed.columns
+    assert observed.loc[0, "DISCLAIMER"] == (
+        "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
     )
     parquet_frame = _stamp_simulated_frame(pd.DataFrame({"METHOD": ["RADCSR"]}))
     assert parquet_frame.loc[0, "OUTCOME_TYPE"] == "SIMULATED"

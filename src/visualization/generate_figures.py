@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 DISCLAIMER = "Inventory outcomes and stockout labels are SIMULATED, not observed hospital events."
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
 KEYS = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
 
 
@@ -74,7 +75,6 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
     brier = _read_csv(root, "output/tables/risk_brier_by_scenario.csv")
     ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
     correlations = _read_csv(root, "output/tables/reliability_signal_correlations.csv")
-    sensitivity = _read_csv(root, "output/tables/inventory_sensitivity.csv")
 
     # 1. Observed SCMD quantity distribution: descriptive source-data view, not stock.
     try:
@@ -96,7 +96,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.set(title="Median monthly quantity per medicine-unit series", xlabel="Month", ylabel="Median recorded quantity per series")
         ax.tick_params(axis="x", rotation=45)
         ax.grid(alpha=.25)
-        generated.append(_finish(fig, fig_dir / "fig01_monthly_scmd_quantity.png", "Figure 1"))
+        generated.append(_finish(fig, fig_dir / "fig01_monthly_scmd_quantity.png", "Figure 1 — Observed SCMD demand distribution"))
     except Exception as exc:
         skipped["fig01_monthly_scmd_quantity.png"] = str(exc)
 
@@ -114,7 +114,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.set(xlabel="Month", ylabel="Quantity (VMP units)")
         ax.legend()
         ax.grid(alpha=.25)
-        generated.append(_finish(fig, fig_dir / "fig02_test_actual_vs_forecast.png", "Figure 2 — Held-out test series"))
+        generated.append(_finish(fig, fig_dir / "fig02_test_actual_vs_forecast.png", "Figure 2 — Observed demand vs forecast"))
     except Exception as exc:
         skipped["fig02_test_actual_vs_forecast.png"] = str(exc)
 
@@ -133,7 +133,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.set(xlabel="Month", ylabel="Quantity (VMP units)")
         ax.legend()
         ax.grid(alpha=.25)
-        generated.append(_finish(fig, fig_dir / "fig03_test_quantile_interval.png", "Figure 3 — Held-out forecast interval"))
+        generated.append(_finish(fig, fig_dir / "fig03_test_quantile_interval.png", "Figure 3 — Observed demand and forecast interval"))
     except Exception as exc:
         skipped["fig03_test_quantile_interval.png"] = str(exc)
 
@@ -149,7 +149,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.set(xlabel="Month", ylabel="Unreliability signal (0–1)", ylim=(-.03, 1.03))
         ax.legend(ncol=4)
         ax.grid(alpha=.25)
-        generated.append(_finish(fig, fig_dir / "fig04_reliability_signals.png", "Figure 4 — Prequential reliability signals"))
+        generated.append(_finish(fig, fig_dir / "fig04_reliability_signals.png", "Figure 4 — Observed-demand reliability signals"))
     except Exception as exc:
         skipped["fig04_reliability_signals.png"] = str(exc)
 
@@ -284,34 +284,14 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
                 if pd.notna(value):
                     ax.text(j, i, f"{value:.2f}", ha="center", va="center", fontsize=9)
         fig.colorbar(image, ax=ax, label="Pearson correlation")
-        generated.append(_finish(fig, fig_dir / "fig10_reliability_signal_correlations.png", "Figure 10 — Reliability signal correlations"))
+        generated.append(_finish(fig, fig_dir / "fig10_reliability_signal_correlations.png", "Figure 10 — Observed-demand reliability signal correlations"))
     except Exception as exc:
         skipped["fig10_reliability_signal_correlations.png"] = str(exc)
 
 
-    # 11. Optional inventory-assumption sensitivity, if the dedicated grid was run.
-    try:
-        required = {"SERVICE_LEVEL", "INITIAL_COVER_MONTHS", "TARGET_COVER_MONTHS", "SIMULATED_STOCKOUT_RATE"}
-        if sensitivity is None or not required.issubset(sensitivity.columns):
-            raise ValueError("inventory_sensitivity.csv unavailable; run scripts/run_inventory_sensitivity.py to create it")
-        frame = sensitivity.copy()
-        frame["POLICY"] = frame.apply(
-            lambda row: f"Initial {row['INITIAL_COVER_MONTHS']:g}m / Target {row['TARGET_COVER_MONTHS']:g}m",
-            axis=1,
-        )
-        summary = frame.groupby(["SERVICE_LEVEL", "POLICY"])["SIMULATED_STOCKOUT_RATE"].mean().unstack("POLICY")
-        if summary.empty:
-            raise ValueError("inventory sensitivity table is empty")
-        fig, ax = plt.subplots(figsize=(11, 5))
-        summary.plot(marker="o", ax=ax)
-        ax.set(xlabel="Assumed service level", ylabel="Mean simulated stockout rate")
-        ax.legend(title="Inventory cover policy", fontsize=8)
-        ax.grid(alpha=.25)
-        generated.append(_finish(fig, fig_dir / "fig11_inventory_sensitivity.png", "Figure 11 — Inventory assumption sensitivity (simulated outcomes)"))
-    except Exception as exc:
-        skipped["fig11_inventory_sensitivity.png"] = str(exc)
-
     report = {
+        "DATA_TYPE": "MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES",
+        "observed_demand_disclaimer": OBSERVED_DEMAND_DISCLAIMER,
         "disclaimer": DISCLAIMER,
         "generated_count": len(generated),
         "generated": [path.name for path in generated],

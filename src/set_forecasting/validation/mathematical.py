@@ -9,6 +9,7 @@ from ..risk.radcsr import radcsr_probability, infer_lead_time_distribution, bloc
 from ..reliability.index import build_reliability_index, KEYS
 
 DISCLAIMER = "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
 FORMULAS = {
  "RADCSR_DISTRIBUTION_PROBABILITY": "p_adj=1-Phi((A-mu_eff)/sigma_eff). L_eff=min(L*(1+kappa_l*R),L*horizon_cap); sigma_eff=sigma_L*(1+kappa_sigma*R)*sqrt(L_eff/L). If A<mu_L: mu_eff=A+(mu_L-A)*(1+kappa_mu*R)*(L_eff/L). If A>=mu_L: mu_eff=A-(A-mu_L)*exp(-kappa_mu*R*L_eff/L), strictly below A for finite R. Require kappa_mu>=kappa_sigma; configured values are 0.75 and 0.50.",
  "RADCSR_PROBABILITY": "1-(1-p_adj)*exp(-S), equivalently p_adj+(1-p_adj)*(1-exp(-S)); S=log(1+kappa_mu*R)+log(L_eff/L). This separate reliability uplift is strictly increasing in R in both regimes for positive configured coefficients and is not the adjusted normal tail. It requires validation calibration and held-out evaluation before calibrated-probability interpretation."
@@ -243,9 +244,11 @@ def correlations():
 
 def run():
  sweeps=monotonicity(); failed=[x for x in sweeps if not x["pass"]]
- result={"disclaimer":DISCLAIMER,"probability_formulas":FORMULAS,"monotonicity_sweeps":sweeps}
+ result={"DATA_TYPE":"MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES",
+         "observed_demand_disclaimer":OBSERVED_DEMAND_DISCLAIMER,
+         "disclaimer":DISCLAIMER,"probability_formulas":FORMULAS,"monotonicity_sweeps":sweeps}
  # A monotonicity failure is a hard stop: print the exact sequences and do not run later checks.
- print(DISCLAIMER); print("DUAL PROBABILITY FORMULAS"); print(json.dumps(FORMULAS,indent=2)); print("1. MONOTONICITY SWEEPS")
+ print(OBSERVED_DEMAND_DISCLAIMER); print(DISCLAIMER); print("DUAL PROBABILITY FORMULAS"); print(json.dumps(FORMULAS,indent=2)); print("1. MONOTONICITY SWEEPS")
  for x in sweeps: print(x["quantity"],"|",x["regime"],"|","PASS" if x["pass"] else "FAIL","| minimum_increment=",x["minimum_increment"],"| sequence=",x["sequence"])
  if failed:
   print("MONOTONICITY FAILURE: stopping. Failing sequences above are verbatim; no B2/B3 work is run.")
@@ -258,7 +261,7 @@ def run():
  result["signal_correlations"]=correlations()
  out=ROOT/"output"; out.mkdir(parents=True,exist_ok=True)
  (out/"mathematical_validation.json").write_text(json.dumps(result,indent=2,default=str),encoding="utf-8")
- lines=["# Phase B Mathematical Validation","",DISCLAIMER,"","## Dual-probability formulas",json.dumps(FORMULAS,indent=2),"","## Monotonicity sweeps"]
+ lines=["# Phase B Mathematical Validation","",OBSERVED_DEMAND_DISCLAIMER,DISCLAIMER,"","## Dual-probability formulas",json.dumps(FORMULAS,indent=2),"","## Monotonicity sweeps"]
  for x in sweeps: lines.append(f"{x['quantity']} / {x['regime']}: {'PASS' if x['pass'] else 'FAIL'}; sequence={x['sequence']}")
  for key in ("lead_time_distribution_validation","probability_calibration","probability_calibration_by_demand_class","reliability_signal_perturbations","drift_detection","signal_correlations"):
   lines += ["",f"## {key}",json.dumps(result[key],indent=2,default=str)]

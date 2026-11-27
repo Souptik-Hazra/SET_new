@@ -31,6 +31,16 @@ def classify_demand(adi, cv2):
         return "Smooth" if cv2 < 0.49 else "Erratic"
     return "Intermittent" if cv2 < 0.49 else "Lumpy"
 
+
+def _allocate_split_counts(n_periods, fractions):
+    """Allocate all three chronological splits using largest-remainder rounding."""
+    raw = np.asarray(fractions, dtype=float) * int(n_periods)
+    counts = np.floor(raw).astype(int)
+    remainder = int(n_periods) - int(counts.sum())
+    order = np.argsort(-(raw-counts), kind="stable")
+    counts[order[:remainder]] += 1
+    return tuple(int(value) for value in counts)
+
 def aggregate_scmd(path, output_path, chunksize=200_000):
     """Aggregate raw rows with DuckDB; IDs are read as VARCHAR."""
     source = get_scmd_path(path)
@@ -69,7 +79,7 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
 
 def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_path,
                          min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
-                         load_series=True):
+                         test_frac=.20, load_series=True):
     """Build and persist the retained monthly cohort one series at a time.
 
     Only the compact aggregated table is held in memory. Expanded monthly rows
@@ -82,8 +92,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
         "NEGATIVE_COST_RECORDS",
     ]
-    if not (0 < float(train_frac) < 1 and 0 < float(val_frac) < 1 and float(train_frac) + float(val_frac) < 1):
-        raise ValueError("train_frac and val_frac must be positive and sum to less than one")
+    fractions = (float(train_frac), float(val_frac), float(test_frac))
+    if any(not np.isfinite(value) or value <= 0 or value >= 1 for value in fractions):
+        raise ValueError("train_frac, val_frac and test_frac must each be between zero and one")
+    if not np.isclose(sum(fractions), 1.0, rtol=0.0, atol=1e-9):
+        raise ValueError("train_frac + val_frac + test_frac must sum to 1.0")
     agg = pd.read_parquet(aggregated_path, columns=required)
     if agg.empty:
         raise ValueError("Aggregated SCMD dataset is empty")
@@ -166,9 +179,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         indexed["DEMAND_CLEAN"] = indexed["DEMAND"]
 
         periods = indexed["PERIOD"].drop_duplicates().sort_values().tolist()
-        n_train = int(n_periods * float(train_frac))
-        n_val = int(n_periods * float(val_frac))
-        if n_train < 1 or n_val < 1 or n_train + n_val >= n_periods:
+        n_train, n_val, n_test = _allocate_split_counts(n_periods, fractions)
+        if min(n_train, n_val, n_test) < 1 or n_train + n_val + n_test != n_periods:
             included = False
             reason.append("insufficient_rows_for_three_way_split")
         train_end = periods[n_train - 1] if n_train else pd.NaT
@@ -241,9 +253,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     cohort_export = cohort.copy()
     monthly_export = monthly_summary.copy()
     for export in (cohort_export, monthly_export):
-        export["OUTCOME_TYPE"] = "SIMULATED"
-        export["STOCKOUTS_ARE_OBSERVED"] = 0
-        export["DISCLAIMER"] = DISCLAIMER
+        export["DATA_TYPE"] = "OBSERVED_DEMAND"
+        export["DISCLAIMER"] = "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED."
     cohort_export.to_csv(cohort_path, index=False)
     monthly_export.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
 
@@ -276,7 +287,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
             "expand and persist retained monthly series in bounded batches; do not reload "
             "the complete expanded cohort into pandas."
         ),
-        "disclaimer": DISCLAIMER,
+        "DATA_TYPE": "OBSERVED_DEMAND",
+        "disclaimer": "Demand observations are observed; inventory outcomes and stockout labels are SIMULATED.",
         "note": (
             "Missing month rows are flagged, not silently interpreted as observed zero demand. "
             "MODEL_DEMAND is NaN for unobserved months; net and negative movements remain "
@@ -290,7 +302,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
-                        load_series=True):
+                        test_frac=.20, load_series=True):
     root = get_project_root()
     source = get_scmd_path(source)
     output_root = Path(output_root); processed_root = Path(processed_root)
@@ -303,7 +315,7 @@ def run_phase1_from_csv(source=None, output_root="output", processed_root="data/
     aggregate_scmd(source, aggregated)
     return build_monthly_series(aggregated, series_path, cohort_path, diagnostics_path,
                                 min_periods=min_periods, min_nonzero=min_nonzero,
-                                train_frac=train_frac, val_frac=val_frac,
+                                train_frac=train_frac, val_frac=val_frac, test_frac=test_frac,
                                 load_series=load_series)
 
 def run_phase1(raw_df=None, **kwargs):

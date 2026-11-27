@@ -47,6 +47,7 @@ def _phase1(args, config):
         min_nonzero=args.min_nonzero if args.min_nonzero is not None else data.get("min_nonzero", 6),
         train_frac=data.get("train_frac", 0.60),
         val_frac=data.get("validation_frac", data.get("val_frac", 0.20)),
+        test_frac=data.get("test_frac", 0.20),
         load_series=False,
     )
     print(json.dumps(report, indent=2, default=str))

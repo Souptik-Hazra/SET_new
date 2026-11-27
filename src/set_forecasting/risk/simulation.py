@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.stats import norm
 from .radcsr import KEYS,infer_lead_time_distribution
 SCENARIOS=["S1_Stable","S2_Surge","S3_Drift","S4_Volatility","S5_Bias","S6_LeadTimeShock","S7_Combined","S8_Intermittent","S9_CorrelatedSurge"]
-PRIMARY_RISK_METHODS=("RADCSR","Static","RollingQuantile","EWMA","ACI","MonteCarlo","WassersteinDRO")
+PRIMARY_RISK_METHODS=("RADCSR","Static","RollingQuantile","EWMA","ACI_simplified","MonteCarlo","WassersteinDRO")
 
 def _stable_seed(seed, key):
     token = "|".join(map(str, key)).encode("utf-8")
@@ -244,8 +244,18 @@ def _wasserstein_tail(samples,threshold,epsilon):
         if budget<=1e-12:break
     return float(np.clip(base+moved/n,0,1))
 
+def _aci_simplified_probability(mu, availability, history, lead, base_sigma):
+    """ACI_simplified converts a rolling 90th-percentile absolute residual to a normal-tail scale.
+
+    It is not the full published adaptive conformal inference method: no online
+    miscoverage controller or conformal risk-control guarantee is implemented.
+    """
+    conformal = float(np.quantile(np.abs(history), .90, method="higher")) if len(history) >= 3 else base_sigma / np.sqrt(lead)
+    return float(1-norm.cdf((availability-mu)/max(conformal*np.sqrt(lead)/1.645,1e-6)))
+
+
 def risk_baseline_probabilities(frame, seed=42):
-    """Static, Rolling Quantile, EWMA, ACI, Monte Carlo and W1-DRO risk methods."""
+    """Static, Rolling Quantile, EWMA, ACI_simplified, Monte Carlo and W1-DRO methods."""
     rows=[]
     for _,g in frame.groupby(KEYS+["SCENARIO_ID"],sort=False,dropna=False):
         g=g.sort_values("PERIOD");q10=g.Q10.to_numpy(float);q50=g.Q50.to_numpy(float);q90=g.Q90.to_numpy(float)
@@ -259,13 +269,12 @@ def risk_baseline_probabilities(frame, seed=42):
             p_roll=float(np.mean(samples>avail[i]))
             ewma_scale=float(pd.Series(np.abs(hist)).ewm(alpha=.25,adjust=False).mean().iloc[-1]*1.645) if len(hist) else base_sigma
             p_ewma=float(1-norm.cdf((avail[i]-mu[i])/max(ewma_scale*np.sqrt(lead[i]),1e-6)))
-            conformal=float(np.quantile(np.abs(hist),.90,method="higher")) if len(hist)>=3 else base_sigma/np.sqrt(lead[i])
-            p_aci=float(1-norm.cdf((avail[i]-mu[i])/max(conformal*np.sqrt(lead[i])/1.645,1e-6)))
+            p_aci=_aci_simplified_probability(mu[i],avail[i],hist,lead[i],base_sigma)
             p_mc=float(np.mean(rng.normal(mu[i],base_sigma,2000)>avail[i]))
             p_dro=_wasserstein_tail(samples,avail[i],.05*max(float(np.std(samples)),1e-6))
             ids=[g.iloc[i][k] for k in KEYS+["PERIOD","SCENARIO_ID"]]
             for name,p in {"Static":p_static,"RollingQuantile":p_roll,"EWMA":p_ewma,
-                           "ACI":p_aci,"MonteCarlo":p_mc,"WassersteinDRO":p_dro}.items():
+                           "ACI_simplified":p_aci,"MonteCarlo":p_mc,"WassersteinDRO":p_dro}.items():
                 rec=dict(zip(KEYS+["PERIOD","SCENARIO_ID"],ids));rec.update(METHOD=name,SHORTAGE_PROBABILITY=float(np.clip(p,0,1)),SPLIT=g.iloc[i].get("SPLIT","test"),FORECAST_MODEL=g.iloc[i].get("FORECAST_MODEL","unknown"),OUTCOME_TYPE="SIMULATED",STOCKOUTS_ARE_OBSERVED=0);rows.append(rec)
     return pd.DataFrame(rows)
 

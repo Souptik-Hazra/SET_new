@@ -65,8 +65,10 @@ def validate_config(config=None):
         raise ValueError("train_frac must be between zero and one")
     if not 0 < float(data["validation_frac"]) < 1:
         raise ValueError("validation_frac must be between zero and one")
-    if data["train_frac"] + data["validation_frac"] >= 1:
-        raise ValueError("train_frac + validation_frac must be below one")
+    if not 0 < float(data["test_frac"]) < 1:
+        raise ValueError("test_frac must be between zero and one")
+    if not abs(float(data["train_frac"]) + float(data["validation_frac"]) + float(data["test_frac"]) - 1.0) <= 1e-9:
+        raise ValueError("train_frac + validation_frac + test_frac must sum to 1.0")
     rel = cfg["reliability"]
     if not 0 < float(rel["target_coverage"]) < 1 or int(rel["window"]) < 1:
         raise ValueError("Invalid reliability coverage/window")

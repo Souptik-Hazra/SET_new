@@ -18,7 +18,7 @@ def _write_csv(root: Path, relative: str, frame: pd.DataFrame) -> None:
     frame.to_csv(path, index=False)
 
 
-def test_generates_eleven_figures_from_pipeline_artifacts(tmp_path):
+def test_generates_ten_figures_from_pipeline_artifacts(tmp_path):
     keys = {
         "ODS_CODE": ["ORG1"] * 3,
         "VMP_SNOMED_CODE": ["VMP1"] * 3,
@@ -82,23 +82,18 @@ def test_generates_eleven_figures_from_pipeline_artifacts(tmp_path):
     )
     corr.insert(0, "signal", ["R_E", "R_B", "R_C", "R_D"])
     _write_csv(tmp_path, "output/tables/reliability_signal_correlations.csv", corr)
-    _write_csv(tmp_path, "output/tables/inventory_sensitivity.csv", pd.DataFrame({
-        "SERVICE_LEVEL": [0.90, 0.95, 0.90, 0.95],
-        "INITIAL_COVER_MONTHS": [1.0, 1.0, 2.0, 2.0],
-        "TARGET_COVER_MONTHS": [2.0, 2.0, 3.0, 3.0],
-        "SIMULATED_STOCKOUT_RATE": [0.2, 0.1, 0.15, 0.05],
-    }))
-
     generated = generate_figures(tmp_path)
 
-    assert len(generated) == 11
+    assert len(generated) == 10
     assert all(path.suffix == ".png" for path in generated)
     assert all(path.is_file() and path.stat().st_size > 0 for path in generated)
     report = json.loads((tmp_path / "output/figures/figure_generation_report.json").read_text())
     assert report["generated_count"] == len(generated)
     assert report["generated"] == [path.name for path in generated]
     assert report["disclaimer"] == DISCLAIMER
+    assert report["DATA_TYPE"] == "MIXED_OBSERVED_DEMAND_AND_SIMULATED_OUTCOMES"
     assert report["skipped"] == {}
+    assert "fig11_inventory_sensitivity.png" not in report["generated"]
 
 
 def test_missing_artifacts_are_reported_without_fabricated_figures(tmp_path):
@@ -106,5 +101,5 @@ def test_missing_artifacts_are_reported_without_fabricated_figures(tmp_path):
     assert generated == []
     report = json.loads((tmp_path / "output/figures/figure_generation_report.json").read_text())
     assert report["generated_count"] == 0
-    assert len(report["skipped"]) == 11
+    assert len(report["skipped"]) == 10
     assert "illustrative" not in json.dumps(report).lower()

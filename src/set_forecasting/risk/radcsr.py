@@ -54,11 +54,8 @@ def _adjusted_distribution(q10, q50, q90, availability, lead, reliability,
     sigma_adj = sigma * (1.0 + kappa_sigma * reliability)
     sigma_eff = sigma_adj * np.sqrt(ratio)
     lead_eff = lead * ratio
-    mu_adj = np.where(
-        low_availability,
-        availability + (mu - availability) * (1.0 + kappa_mu * reliability),
-        availability - (availability - mu) * np.exp(-kappa_mu * reliability),
-    )
+    # Diagnostic alias is exactly the effective mean passed to _tail; probabilities are unchanged.
+    mu_adj = mu_eff
     return (mu_eff, sigma_eff, mu, sigma, sigma_adj, mu_adj, lead_eff)
 
 def radcsr_probability(q10, q50, q90, availability, lead_time, r_rel,

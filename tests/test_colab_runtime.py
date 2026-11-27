@@ -198,3 +198,28 @@ def test_unsupported_python_is_rejected_unless_explicitly_overridden(monkeypatch
         result = colab_runtime.assert_supported_python()
     assert result["python_supported"] is False
     assert result["python_override"] is True
+
+
+
+def test_model_checkpoint_requires_every_declared_artifact(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runtime, "ROOT", tmp_path)
+    monkeypatch.setattr(colab_runtime, "MANIFEST_PATH", tmp_path / "output" / "colab_run_manifest.json")
+    artifacts = colab_runtime.MODEL_ARTIFACTS
+    for relative in artifacts:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"verified")
+    colab_runtime._write_manifest({
+        "version": 1,
+        "stages": {"model_pipeline": {
+            "fingerprint": "complete",
+            "artifacts": list(artifacts),
+            "status": "completed",
+        }},
+    })
+    assert colab_runtime.stage_is_complete("model_pipeline", "complete", artifacts)
+    for relative in artifacts:
+        target = tmp_path / relative
+        target.unlink()
+        assert not colab_runtime.stage_is_complete("model_pipeline", "complete", artifacts), relative
+        target.write_bytes(b"restored")
