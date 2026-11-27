@@ -53,7 +53,7 @@ def _series_sample(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_figures(project_root: str | Path | None = None) -> list[Path]:
-    """Create up to ten figures from actual pipeline artifacts and return saved paths.
+    """Create figures from actual pipeline artifacts and return saved paths.
 
     Missing source artifacts are recorded in output/figures/figure_generation_report.json.
     Figures with simulated outcomes carry an explicit simulated-data label.
@@ -74,6 +74,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
     brier = _read_csv(root, "output/tables/risk_brier_by_scenario.csv")
     ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
     correlations = _read_csv(root, "output/tables/reliability_signal_correlations.csv")
+    sensitivity = _read_csv(root, "output/tables/inventory_sensitivity.csv")
 
     # 1. Observed SCMD quantity distribution: descriptive source-data view, not stock.
     try:
@@ -275,6 +276,29 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         generated.append(_finish(fig, fig_dir / "fig10_reliability_signal_correlations.png", "Figure 10 — Reliability signal correlations"))
     except Exception as exc:
         skipped["fig10_reliability_signal_correlations.png"] = str(exc)
+
+
+    # 11. Optional inventory-assumption sensitivity, if the dedicated grid was run.
+    try:
+        required = {"SERVICE_LEVEL", "INITIAL_COVER_MONTHS", "TARGET_COVER_MONTHS", "SIMULATED_STOCKOUT_RATE"}
+        if sensitivity is None or not required.issubset(sensitivity.columns):
+            raise ValueError("inventory_sensitivity.csv unavailable; run scripts/run_inventory_sensitivity.py to create it")
+        frame = sensitivity.copy()
+        frame["POLICY"] = frame.apply(
+            lambda row: f"Initial {row['INITIAL_COVER_MONTHS']:g}m / Target {row['TARGET_COVER_MONTHS']:g}m",
+            axis=1,
+        )
+        summary = frame.groupby(["SERVICE_LEVEL", "POLICY"])["SIMULATED_STOCKOUT_RATE"].mean().unstack("POLICY")
+        if summary.empty:
+            raise ValueError("inventory sensitivity table is empty")
+        fig, ax = plt.subplots(figsize=(11, 5))
+        summary.plot(marker="o", ax=ax)
+        ax.set(xlabel="Assumed service level", ylabel="Mean simulated stockout rate")
+        ax.legend(title="Inventory cover policy", fontsize=8)
+        ax.grid(alpha=.25)
+        generated.append(_finish(fig, fig_dir / "fig11_inventory_sensitivity.png", "Figure 11 — Inventory assumption sensitivity (simulated outcomes)"))
+    except Exception as exc:
+        skipped["fig11_inventory_sensitivity.png"] = str(exc)
 
     report = {
         "disclaimer": DISCLAIMER,
