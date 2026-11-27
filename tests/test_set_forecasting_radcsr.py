@@ -614,3 +614,53 @@ def test_ingestion_persists_missing_month_model_demand_as_nan(tmp_path):
     adi, _ = compute_adi_cv2(observed)
     assert adi == 1.0
     assert cohort.iloc[0].N_OBSERVED == 23
+
+
+
+def test_missing_month_lags_remain_missing_without_becoming_zero():
+    x = sample(12).copy()
+    x.loc[8, "OBSERVATION_MISSING"] = True
+    x.loc[8, "MODEL_DEMAND"] = np.nan
+    features = create_features(x)
+    assert np.isnan(features.loc[8, "LAG_1"])
+    assert np.isnan(features.loc[9, "LAG_1"])
+    assert features.loc[9, "LAG_2"] == x.loc[7, "MODEL_DEMAND"]
+    assert not bool(features.loc[8, "TARGET_OBSERVED"])
+
+
+def test_missing_month_uses_explicit_forecast_demand_only_for_simulation_and_censors_labels():
+    x = sample(12).copy()
+    x["Q10"] = 8.0
+    x["Q50"] = 10.0
+    x["Q90"] = 12.0
+    x.loc[5, "OBSERVATION_MISSING"] = True
+    x.loc[5, "MODEL_DEMAND"] = np.nan
+    x["SCENARIO_BASE_DEMAND"] = x.MODEL_DEMAND.where(
+        ~x.OBSERVATION_MISSING, x.Q50
+    )
+    x["DEMAND_IMPUTED_FOR_SIMULATION"] = x.OBSERVATION_MISSING
+    scenarios = make_scenarios(x, seed=7, lead_times=(2,))
+    stable = scenarios[scenarios.SCENARIO_ID == "S1_Stable"]
+    assert np.isfinite(stable.SCENARIO_DEMAND).all()
+    assert stable.loc[stable.PERIOD == x.loc[5, "PERIOD"], "DEMAND_IMPUTED_FOR_SIMULATION"].iloc[0]
+    inventory = simulate_inventory(stable)
+    missing_period = x.loc[5, "PERIOD"]
+    assert inventory.loc[inventory.PERIOD == missing_period, "MONTHLY_STOCKOUT_LABEL"].isna().all()
+    previous_period = x.loc[4, "PERIOD"]
+    assert inventory.loc[inventory.PERIOD == previous_period, "STOCKOUT_LABEL"].isna().all()
+
+
+def test_pipeline_stamps_every_output_csv_with_simulation_disclaimer(tmp_path):
+    from src.set_forecasting.pipeline import _stamp_output_csvs
+    tables = tmp_path / "tables"
+    tables.mkdir()
+    pd.DataFrame({"METHOD": ["RADCSR"], "N": [10]}).to_csv(
+        tables / "example.csv", index=False
+    )
+    _stamp_output_csvs(tmp_path)
+    result = pd.read_csv(tables / "example.csv")
+    assert result.loc[0, "OUTCOME_TYPE"] == "SIMULATED"
+    assert result.loc[0, "STOCKOUTS_ARE_OBSERVED"] == 0
+    assert result.loc[0, "DISCLAIMER"] == (
+        "Inventory outcomes are SIMULATED. Stockout labels are not observed events."
+    )
