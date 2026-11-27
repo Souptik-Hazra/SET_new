@@ -24,7 +24,7 @@ See [the architecture and research protocol](docs/SETReliable_SCMD_RADCSR.md). N
 
 ## Google Colab
 
-A resumable Colab execution notebook is available at [`notebooks/SET_Pharma_Colab_Pipeline.ipynb`](notebooks/SET_Pharma_Colab_Pipeline.ipynb). See [Colab execution instructions](docs/COLAB_EXECUTION.md) for Drive setup, checkpoints and recovery behavior. The notebook calls the existing Python package; it does not duplicate research logic.
+A resumable Colab execution notebook is available at [`notebooks/SET_Pharma_Colab_Pipeline.ipynb`](notebooks/SET_Pharma_Colab_Pipeline.ipynb). See [Colab execution instructions](docs/COLAB_EXECUTION.md) for Drive setup, checkpoints and recovery behavior. The notebook calls the existing Python package; it does not duplicate research logic. After the pipeline runs, the notebook generates figures from saved experiment artifacts, displays the PNGs inline, and persists them under `output/figures/` and Google Drive. Missing inputs are reported rather than replaced with illustrative values.
 
 ## Setup
 
