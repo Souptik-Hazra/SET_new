@@ -50,10 +50,14 @@ This is the single documented end-to-end command. It performs Phase 1 ingestion 
 To rerun only the model pipeline after the processed monthly Parquet file already exists:
 
 ```bash
-python run_phase5_8_scmd.py
+python scripts/run_pipeline.py model
 ```
 
-This also calls the canonical `run_model_pipeline()`; it does not invoke the retired legacy implementation.
+The unified entry point also supports `phase1`, `phase2`, `phase3` and
+`phase4` for stage-level execution. Run
+`python scripts/run_pipeline.py --help` for available options. The former
+full-cohort pharmacy runner remains disabled because its schema is incompatible
+with SCMD.
 
 ## Clinical priority
 
