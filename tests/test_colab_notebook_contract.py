@@ -96,4 +96,6 @@ def test_notebook_generates_displays_and_syncs_figures():
     assert generator.is_file()
     generator_source = generator.read_text(encoding="utf-8")
     assert "figure_generation_report.json" in generator_source
-    assert "illustrative" not in generator_source.lower()
+    assert "radcsr_bins =" not in generator_source
+    assert "static_bins =" not in generator_source
+    assert "phase9_evaluation_summary.csv" not in generator_source
