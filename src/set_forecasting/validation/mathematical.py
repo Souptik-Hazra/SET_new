@@ -261,7 +261,7 @@ def run():
          "","## Monotonicity sweeps"]
   for x in sweeps:
    lines.append(f"{x['quantity']} / {x['regime']}: {'PASS' if x['pass'] else 'FAIL'}; minimum_increment={x['minimum_increment']}; sequence={x['sequence']}")
-  (out/"mathematical_validation.md").write_text("\\n".join(lines),encoding="utf-8")
+  (out/"mathematical_validation.md").write_text("\n".join(lines),encoding="utf-8")
   print("MONOTONICITY FAILURE: stopping. Exact failure sequences saved to output/mathematical_validation.json and .md; no B2/B3 work is run.")
   return result
  result["status"] = "PASS"
