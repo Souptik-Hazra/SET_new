@@ -190,7 +190,7 @@ def test_python_313_is_required(monkeypatch):
         SimpleNamespace(major=3, minor=12),
     )
     monkeypatch.delenv("SET_ALLOW_UNSUPPORTED_PYTHON", raising=False)
-    with pytest.raises(RuntimeError, match="requires Python 3.13.x"):
+    with pytest.raises(RuntimeError, match="requires Python 3.13.18"):
         colab_runtime.assert_supported_python()
 
     monkeypatch.setattr(
