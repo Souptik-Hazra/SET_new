@@ -134,6 +134,11 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             raise ValueError("Inventory quantiles must be finite and satisfy 0 <= Q10 <= Q90")
         leads=raw_leads.astype(int)
         demand_values=demand_raw
+        imputed_values = (
+            g["DEMAND_IMPUTED_FOR_SIMULATION"].fillna(False).astype(bool).to_numpy()
+            if "DEMAND_IMPUTED_FOR_SIMULATION" in g
+            else np.zeros(len(g), dtype=bool)
+        )
         stock=max(0,float(g.Q90.iloc[0])*initial_cover);pipeline=[]
         for t,row in enumerate(g.itertuples()):
             receipts=sum(q for due,q in pipeline if due<=t)
@@ -146,6 +151,9 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
             available=on_hand+pipeline_available
             lead_end = min(len(g), t + lead)
             horizon_complete = (t + lead) <= len(g)
+            label_observation_complete = bool(
+                horizon_complete and not imputed_values[t:lead_end].any()
+            )
             horizon_demand = demand_values[t:lead_end]
             realised_lead_demand = float(horizon_demand.sum())
             current_demand = float(demand_values[t])
@@ -182,8 +190,10 @@ def simulate_inventory(scenarios,service_level=.95,initial_cover=2.,target_cover
                 PIPELINE_WITHIN_LEAD_TIME=pipeline_available,ORDER_PLACED=order,
                 LEAD_TIME_MONTHS=lead,SHORTAGE_QUANTITY=shortage,
                 LEAD_TIME_STOCKOUT_MONTHS=lead_time_stockout_months if horizon_complete else np.nan,
-                MONTHLY_STOCKOUT_LABEL=int(shortage>0),
-                STOCKOUT_LABEL=int(lead_time_stockout_months > 0) if horizon_complete else np.nan,
+                LABEL_OBSERVATION_COMPLETE=int(label_observation_complete),
+                MONTHLY_STOCKOUT_LABEL=int(shortage>0) if not imputed_values[t] else np.nan,
+                STOCKOUT_LABEL=int(lead_time_stockout_months > 0) if label_observation_complete else np.nan,
+                DEMAND_IMPUTED_FOR_SIMULATION=int(imputed_values[t]),
                 STOCKOUTS_ARE_OBSERVED=0,OUTCOME_TYPE="SIMULATED")
             rows.append(rec)
     return pd.DataFrame(rows)
