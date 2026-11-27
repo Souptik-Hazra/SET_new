@@ -6,9 +6,11 @@
 
 ## Setup
 
+The supported Colab and CI interpreter is **Python 3.13.18**. The notebook, runtime helper and canonical model pipeline reject other Python minor versions.
+
 1. Push/check out `feature/colab-pipeline-execution`.
 2. Upload the authorised SCMD source CSV to Google Drive at:
-   `MyDrive/SET_Pharma/data/raw/combined_secondary_care_medicines.csv`
+   `MyDrive/Dataset/combined_secondary_care_medicines.csv`
    or edit `DRIVE_RAW_CSV` in the notebook.
 3. Open the notebook in Google Colab and run cells in order.
 4. Keep the default research parameters unless running a documented experiment.
