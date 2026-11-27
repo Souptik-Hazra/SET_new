@@ -109,7 +109,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         if frame.empty:
             raise ValueError("no held-out test forecasts")
         fig, ax = plt.subplots(figsize=(11, 5))
-        ax.plot(frame["PERIOD"], frame["MODEL_DEMAND"], marker="o", label="Actual recorded quantity")
+        ax.plot(frame["PERIOD"], frame["MODEL_DEMAND"], marker="o", label="Recorded SCMD quantity")
         ax.plot(frame["PERIOD"], frame["Q50"], marker="o", label="Median forecast (Q50)")
         ax.set(xlabel="Month", ylabel="Quantity (VMP units)")
         ax.legend()
@@ -128,7 +128,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
             raise ValueError("no held-out test forecasts")
         fig, ax = plt.subplots(figsize=(11, 5))
         ax.fill_between(frame["PERIOD"], frame["Q10"], frame["Q90"], alpha=.22, label="P10–P90 forecast interval")
-        ax.plot(frame["PERIOD"], frame["MODEL_DEMAND"], marker="o", label="Actual")
+        ax.plot(frame["PERIOD"], frame["MODEL_DEMAND"], marker="o", label="Recorded SCMD quantity")
         ax.plot(frame["PERIOD"], frame["Q50"], linestyle="--", label="Q50")
         ax.set(xlabel="Month", ylabel="Quantity (VMP units)")
         ax.legend()
