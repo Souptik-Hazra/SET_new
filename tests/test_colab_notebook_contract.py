@@ -136,3 +136,11 @@ def test_active_python_modules_do_not_read_yaml_configuration():
         source = path.read_text(encoding="utf-8")
         assert "config.yaml" not in source, f"YAML config reference remains in {path}"
         assert "import yaml" not in source, f"YAML dependency remains in {path}"
+
+
+def test_notebook_defaults_to_fresh_artifacts_and_makes_restore_opt_in():
+    notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
+    assert "RESTORE_CHECKPOINTS = False" in notebook_source
+    assert "if RESTORE_CHECKPOINTS:" in notebook_source
+    assert 'for relative in ("data/processed", "output"):' in notebook_source
+    assert "shutil.rmtree(target)" in notebook_source
