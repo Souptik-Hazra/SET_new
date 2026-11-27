@@ -248,8 +248,23 @@ def run():
  print(DISCLAIMER); print("DUAL PROBABILITY FORMULAS"); print(json.dumps(FORMULAS,indent=2)); print("1. MONOTONICITY SWEEPS")
  for x in sweeps: print(x["quantity"],"|",x["regime"],"|","PASS" if x["pass"] else "FAIL","| minimum_increment=",x["minimum_increment"],"| sequence=",x["sequence"])
  if failed:
-  print("MONOTONICITY FAILURE: stopping. Failing sequences above are verbatim; no B2/B3 work is run.")
+  result["status"] = "FAILED_MONOTONICITY_GATE"
+  result["failure_count"] = len(failed)
+  result["execution_boundary"] = "Stopped before B2/B3 validation; no downstream statistical checks were run."
+  out=ROOT/"output"; out.mkdir(parents=True,exist_ok=True)
+  (out/"mathematical_validation.json").write_text(
+   json.dumps(result,indent=2,default=str),encoding="utf-8")
+  lines=["# Phase B Mathematical Validation","",DISCLAIMER,
+         "","**STATUS: FAILED_MONOTONICITY_GATE**",
+         "","Downstream B2/B3 checks were not run.",
+         "","## Dual-probability formulas",json.dumps(FORMULAS,indent=2),
+         "","## Monotonicity sweeps"]
+  for x in sweeps:
+   lines.append(f"{x['quantity']} / {x['regime']}: {'PASS' if x['pass'] else 'FAIL'}; minimum_increment={x['minimum_increment']}; sequence={x['sequence']}")
+  (out/"mathematical_validation.md").write_text("\\n".join(lines),encoding="utf-8")
+  print("MONOTONICITY FAILURE: stopping. Exact failure sequences saved to output/mathematical_validation.json and .md; no B2/B3 work is run.")
   return result
+ result["status"] = "PASS"
  result["lead_time_distribution_validation"]=lead_time_validation()
  result["probability_calibration"]=probability_calibration()
  result["probability_calibration_by_demand_class"]=probability_calibration_by_demand_class()
