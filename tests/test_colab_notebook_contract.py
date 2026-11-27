@@ -83,3 +83,17 @@ def test_notebook_and_helper_use_same_stage_parameters():
     assert "def run_mathematical_validation(" in helper
     assert "require_stage(\"ingestion\"" in helper
     assert "require_stage(\"model_pipeline\"" in helper
+
+
+
+def test_notebook_generates_displays_and_syncs_figures():
+    notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
+    assert "from src.visualization.generate_figures import generate_figures" in notebook_source
+    assert "generated_figures = generate_figures(REPO_DIR)" in notebook_source
+    assert "display(Image(filename=str(figure_path)" in notebook_source
+    assert "sync_artifacts(REPO_DIR, DRIVE_ARTIFACT_ROOT)" in notebook_source
+    generator = ROOT / "src" / "visualization" / "generate_figures.py"
+    assert generator.is_file()
+    generator_source = generator.read_text(encoding="utf-8")
+    assert "figure_generation_report.json" in generator_source
+    assert "illustrative" not in generator_source.lower()
