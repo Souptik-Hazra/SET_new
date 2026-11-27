@@ -18,7 +18,7 @@ def _write_csv(root: Path, relative: str, frame: pd.DataFrame) -> None:
     frame.to_csv(path, index=False)
 
 
-def test_generates_ten_figures_from_pipeline_artifacts(tmp_path):
+def test_generates_eleven_figures_from_pipeline_artifacts(tmp_path):
     keys = {
         "ODS_CODE": ["ORG1"] * 3,
         "VMP_SNOMED_CODE": ["VMP1"] * 3,
@@ -92,9 +92,11 @@ def test_generates_ten_figures_from_pipeline_artifacts(tmp_path):
     generated = generate_figures(tmp_path)
 
     assert len(generated) == 11
+    assert all(path.suffix == ".png" for path in generated)
     assert all(path.is_file() and path.stat().st_size > 0 for path in generated)
     report = json.loads((tmp_path / "output/figures/figure_generation_report.json").read_text())
-    assert report["generated_count"] == 10
+    assert report["generated_count"] == len(generated)
+    assert report["generated"] == [path.name for path in generated]
     assert report["disclaimer"] == DISCLAIMER
     assert report["skipped"] == {}
 
