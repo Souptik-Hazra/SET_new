@@ -37,8 +37,9 @@ def train_and_predict(series,min_train_rows=100,random_state=42,winsor_quantile=
     for col in FEATURES:
         if col in features:features[col]=pd.to_numeric(features[col],errors="coerce")
     train=features[(features.SPLIT=="train")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
-    val=features[(features.SPLIT=="validation")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
-    test=features[(features.SPLIT=="test")&features.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND"])
+    validation_calendar=features[features.SPLIT=="validation"].copy()
+    val=validation_calendar[validation_calendar.TARGET_OBSERVED].dropna(subset=["MODEL_DEMAND_WINSORIZED"])
+    test=features[features.SPLIT=="test"].copy()
     models=[];status="naive_fallback"
     try:
         import lightgbm as lgb
@@ -68,7 +69,7 @@ def train_and_predict(series,min_train_rows=100,random_state=42,winsor_quantile=
         part["NAIVE_LAST"]=part.LAG_1.fillna(0).clip(lower=0)
         part["NAIVE_SEASONAL_12"]=part.LAG_12.fillna(part.NAIVE_LAST).clip(lower=0)
         return part
-    validation_pred=predict(val);test_pred=predict(test)
+    validation_pred=predict(validation_calendar);test_pred=predict(test)
     all_predictions=pd.concat([validation_pred,test_pred],ignore_index=True)
     metrics=[]
     if len(test_pred):
@@ -76,6 +77,7 @@ def train_and_predict(series,min_train_rows=100,random_state=42,winsor_quantile=
         for col,name in [("NAIVE_LAST","PreviousObservationNaive"),("NAIVE_SEASONAL_12","SeasonalNaive12")]:
             z=test_pred.copy();z["Q10"]=z[col]*.5;z["Q50"]=z[col];z["Q90"]=z[col]*1.5
             metrics.append(_score(z,name))
-    report={"model":status,"train_rows":len(train),"validation_rows":len(val),
-      "test_rows":len(test_pred),"validation_predictions":len(validation_pred)}
+    report={"model":status,"train_rows":len(train),"validation_rows":len(val), "validation_calendar_rows":len(validation_calendar),
+      "test_rows":len(test_pred),"test_observed_rows":int(test_pred.TARGET_OBSERVED.sum()),
+      "validation_predictions":len(validation_pred)}
     return features,all_predictions,pd.DataFrame(metrics),report
