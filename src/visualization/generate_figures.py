@@ -213,7 +213,11 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         required = {"SCENARIO_ID", "STOCKOUT_LABEL", "SHORTAGE_QUANTITY", "SPLIT"}
         if inventory is None or not required.issubset(inventory.columns):
             raise ValueError("simulated inventory artifact missing required columns")
-        frame = inventory[(inventory["SPLIT"] == "test")].dropna(subset=["STOCKOUT_LABEL"])
+        if scenarios is None or not {"PERIOD", "SCENARIO_ID", "SPLIT"}.issubset(scenarios.columns):
+            raise ValueError("scenario stream split metadata unavailable")
+        split_keys = [key for key in KEYS if key in inventory.columns and key in scenarios.columns] + ["PERIOD", "SCENARIO_ID"]
+        frame = inventory.merge(scenarios[split_keys + ["SPLIT"]].drop_duplicates(), on=split_keys, how="inner", validate="one_to_one")
+        frame = frame[(frame["SPLIT"] == "test")].dropna(subset=["STOCKOUT_LABEL"])
         if frame.empty:
             raise ValueError("no complete held-out simulated inventory horizons")
         summary = frame.groupby("SCENARIO_ID").agg(
