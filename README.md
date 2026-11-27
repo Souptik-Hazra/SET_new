@@ -50,6 +50,8 @@ python -m src.set_forecasting.validation.empirical_monotonicity
 
 The audit reports total observations, both probability-curve pass/fail counts, scenario-level counts, low-availability failures and violating observation keys in `output/empirical_monotonicity_audit.json`. All inventory and stockout outcomes remain simulated.
 
+For a pinned Google Colab workflow with runtime and disk preflight, clean generated-artifact setup, SHA verification, full-cohort execution and post-run artifact checks, open [`notebooks/SET_Pharma_Colab_Pipeline.ipynb`](notebooks/SET_Pharma_Colab_Pipeline.ipynb). The notebook pins the pipeline source to `dfb87e6015ab3c33d07302ce911616293b77e814`; update that pin deliberately when changing the execution baseline.
+
 
 To rerun only the model pipeline after the processed monthly Parquet file already exists:
 
