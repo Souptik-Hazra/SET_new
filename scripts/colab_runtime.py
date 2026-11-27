@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import warnings
 import platform
 import shutil
 import subprocess
