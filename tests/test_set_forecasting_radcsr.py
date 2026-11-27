@@ -622,7 +622,7 @@ def test_missing_month_lags_remain_missing_without_becoming_zero():
     x.loc[8, "OBSERVATION_MISSING"] = True
     x.loc[8, "MODEL_DEMAND"] = np.nan
     features = create_features(x)
-    assert np.isnan(features.loc[8, "LAG_1"])
+    assert features.loc[8, "LAG_1"] == x.loc[7, "MODEL_DEMAND"]
     assert np.isnan(features.loc[9, "LAG_1"])
     assert features.loc[9, "LAG_2"] == x.loc[7, "MODEL_DEMAND"]
     assert not bool(features.loc[8, "TARGET_OBSERVED"])
