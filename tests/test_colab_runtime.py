@@ -130,3 +130,22 @@ def test_upstream_rerun_invalidates_downstream_checkpoint(tmp_path, monkeypatch)
     assert not colab_runtime.stage_is_complete(
         "mathematical_validation", "math-old", ("output/math.json",)
     )
+
+
+def test_fingerprint_changes_when_stage_code_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runtime, "ROOT", tmp_path)
+    source = tmp_path / "input.csv"
+    config = tmp_path / "config" / "config.yaml"
+    code = tmp_path / "src" / "module.py"
+    source.parent.mkdir(parents=True)
+    config.parent.mkdir(parents=True)
+    code.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+    config.write_text("seed: 42", encoding="utf-8")
+    code.write_text("VALUE = 1", encoding="utf-8")
+
+    before = colab_runtime.run_fingerprint(source, {"stage": "test"}, ("src/module.py",))
+    code.write_text("VALUE = 2", encoding="utf-8")
+    after = colab_runtime.run_fingerprint(source, {"stage": "test"}, ("src/module.py",))
+
+    assert before != after
