@@ -636,4 +636,4 @@ def test_full_cohort_colab_notebook_code_cells_compile():
     assert "data/processed" in source and "'output'" in source
     assert "colab_run_report.md" in source
     assert "Empirical evidence collected. Claim evaluation pending review." in source
-    assert "REPO_COMMIT = '87eb570f8eda127018fa0eabd523344806532637'" in source
+    assert "REPO_COMMIT = '7dd7ca0ee291e5b34361faa9b52c89b80b773e08'" in source
