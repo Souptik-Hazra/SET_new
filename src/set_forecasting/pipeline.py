@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import yaml
+from .config import get_config, validate_config
 from .data.source import get_project_root
 from .forecasting.model import train_and_predict
 from .reliability.index import build_reliability_index
@@ -21,12 +21,7 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     series_path = project_path(series_path)
     out = project_path(output_dir)
     proc = project_path(processed_dir)
-    config_path = root / "config" / "config.yaml"
-    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
-    if cfg is None:
-        cfg = {}
-    if not isinstance(cfg, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
+    cfg = validate_config(get_config())
     seed = int(cfg.get("seed", 42) if seed is None else seed)
     resolved_config = dict(cfg)
     resolved_config["seed"] = int(seed)
@@ -123,8 +118,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         base=g[keys+["SPLIT","STOCKOUT_LABEL","AVAILABLE_STOCK","LEAD_TIME_MONTHS"]].reset_index(drop=True)
         rad.append(pd.concat([base,result],axis=1))
         ab=radcsr_ablations(g,
-            kappa_sigma=float(risk_cfg.get("kappa_sigma",.75)),
-            kappa_mu=float(risk_cfg.get("kappa_mu",.50)),
+            kappa_sigma=radcsr_ks,
+            kappa_mu=radcsr_km,
             kappa_l=float(risk_cfg.get("kappa_l",1.5)),
             horizon_cap=risk_cfg.get("horizon_cap",2.0),
             weights=rel_cfg.get("weights")).reset_index(drop=True)
@@ -184,8 +179,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     test_joined=joined[joined.SPLIT=="test"]
     if test_joined.empty:
         raise RuntimeError("No held-out test rows available for RADCSR monotonicity acceptance gate.")
-    mono_cfg = dict(ks=float(risk_cfg.get("kappa_sigma", .75)),
-                    km=float(risk_cfg.get("kappa_mu", .50)),
+    mono_cfg = dict(ks=radcsr_ks,
+                    km=radcsr_km,
                     kl=float(risk_cfg.get("kappa_l", 1.5)),
                     horizon_cap=risk_cfg.get("horizon_cap", 2.0))
     audit_rows=[]
