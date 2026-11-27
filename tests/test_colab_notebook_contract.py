@@ -38,6 +38,9 @@ def test_colab_notebook_is_valid_and_every_code_cell_compiles():
 def test_notebook_imports_the_runtime_and_uses_all_stage_entrypoints():
     notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
     assert "from scripts.colab_runtime import" in notebook_source
+    assert "importlib.util.find_spec(name)" in notebook_source
+    assert "src.visualization.generate_figures" in notebook_source
+    assert (ROOT / "src" / "visualization" / "__init__.py").is_file()
     assert "run_ingestion(" in notebook_source
     assert "run_models(" in notebook_source
     assert "run_mathematical_validation(" in notebook_source
