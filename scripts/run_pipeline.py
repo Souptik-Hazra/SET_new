@@ -50,6 +50,8 @@ def _phase1(args, config):
     data = config.get("data", {})
     _, cohort, report = run_phase1_from_csv(
         source=args.source,
+        output_root=args.output,
+        processed_root=args.processed,
         min_periods=args.min_periods if args.min_periods is not None else data.get("min_periods", 18),
         min_nonzero=args.min_nonzero if args.min_nonzero is not None else data.get("min_nonzero", 6),
         train_frac=data.get("train_frac", 0.60),
