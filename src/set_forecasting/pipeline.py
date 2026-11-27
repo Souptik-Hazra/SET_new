@@ -264,7 +264,8 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
         MEAN_SHORTAGE_QUANTITY=("SHORTAGE_QUANTITY","mean"),
         MEAN_AVAILABLE_STOCK=("AVAILABLE_STOCK","mean")
     ).to_csv(out/"tables/phase6_inventory_scenarios.csv",index=False)
-    stats=series_bootstrap_holm(eval_prob,inventory,n_boot,seed)
+    primary_eval = primary_test.drop(columns=["STOCKOUT_LABEL"], errors="ignore")
+    stats=series_bootstrap_holm(primary_eval,inventory,n_boot,seed)
     stats.to_csv(out/"tables/radcsr_vs_baselines_bootstrap_holm.csv",index=False)
     if len(stats):
         stats[(stats.SCENARIO_ID=="S5_Bias") & (stats.COMPARISON.isin(["Static","WassersteinDRO"]))].to_csv(
