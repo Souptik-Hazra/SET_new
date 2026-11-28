@@ -395,7 +395,7 @@ def test_ingestion_persists_filtered_series_with_chronological_splits(tmp_path):
     assert set(saved.SPLIT) == {"train", "validation", "test"}
     assert saved.groupby(KEYS).size().eq(24).all()
     assert report["series_retained"] == 2
-    assert "bounded batches" in report["memory_strategy"]
+    assert "DuckDB SQL performs" in report["memory_strategy"]
 
 
 def test_inventory_excludes_receipt_due_after_current_lead_time_window():
@@ -699,3 +699,82 @@ def test_mathematical_validation_reports_four_strict_monotonicity_sweeps():
         assert len(item["sequence"]) == 21
         assert item["pass"] is True
         assert item["minimum_increment"] > 0.0
+
+
+def test_duckdb_ingestion_preserves_missing_months_and_split_boundaries(tmp_path):
+    from src.set_forecasting.data.ingestion import build_monthly_series
+
+    rows = []
+    periods = pd.date_range("2023-01-01", periods=24, freq="MS")
+    for index, period in enumerate(periods):
+        if index == 5:
+            continue
+        rows.append({
+            "YEAR_MONTH": period.strftime("%Y%m"),
+            "ODS_CODE": "ORG01",
+            "VMP_SNOMED_CODE": "000123",
+            "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+            "VMP_PRODUCT_NAME": "Test medicine",
+            "UNIT_OF_MEASURE_NAME": "tablet",
+            "SOURCE_RECORDS": 1,
+            "POSITIVE_QUANTITY": float(10 + index),
+            "NEGATIVE_QUANTITY": 0.0,
+            "NET_QUANTITY": float(10 + index),
+            "TOTAL_INDICATIVE_COST": float((10 + index) * 2),
+            "VALID_QUANTITY_RECORDS": 1,
+            "INVALID_QUANTITY_RECORDS": 0,
+            "MISSING_OR_INVALID_COST_RECORDS": 0,
+            "NEGATIVE_COST_RECORDS": 0,
+        })
+    aggregated = tmp_path / "aggregated.parquet"
+    output = tmp_path / "monthly.parquet"
+    pd.DataFrame(rows).to_parquet(aggregated, index=False)
+
+    _, cohort, report = build_monthly_series(
+        aggregated, output, tmp_path / "cohort.csv", tmp_path / "diagnostics.json",
+        min_periods=18, min_nonzero=6, load_series=False,
+    )
+    saved = pd.read_parquet(output).sort_values("PERIOD").reset_index(drop=True)
+
+    assert len(saved) == 24
+    assert saved.loc[5, "OBSERVATION_MISSING"]
+    assert pd.isna(saved.loc[5, "MODEL_DEMAND"])
+    assert saved.loc[5, "YEAR_MONTH"] == "202306"
+    assert saved.loc[13, "SPLIT"] == "train"
+    assert saved.loc[14, "SPLIT"] == "validation"
+    assert saved.loc[18, "SPLIT"] == "validation"
+    assert saved.loc[19, "SPLIT"] == "test"
+    assert saved["TRAIN_END"].nunique() == 1
+    assert saved["VALIDATION_END"].nunique() == 1
+    assert cohort.loc[0, "N_MISSING_PERIODS"] == 1
+    assert report["series_retained"] == 1
+
+
+def test_duckdb_ingestion_rejects_invalid_year_month(tmp_path):
+    import pytest
+    from src.set_forecasting.data.ingestion import build_monthly_series
+
+    source = pd.DataFrame([{
+        "YEAR_MONTH": "2023-13",
+        "ODS_CODE": "ORG01",
+        "VMP_SNOMED_CODE": "000123",
+        "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+        "VMP_PRODUCT_NAME": "Test medicine",
+        "UNIT_OF_MEASURE_NAME": "tablet",
+        "SOURCE_RECORDS": 1,
+        "POSITIVE_QUANTITY": 10.0,
+        "NEGATIVE_QUANTITY": 0.0,
+        "NET_QUANTITY": 10.0,
+        "TOTAL_INDICATIVE_COST": 20.0,
+        "VALID_QUANTITY_RECORDS": 1,
+        "INVALID_QUANTITY_RECORDS": 0,
+        "MISSING_OR_INVALID_COST_RECORDS": 0,
+        "NEGATIVE_COST_RECORDS": 0,
+    }])
+    path = tmp_path / "aggregated.parquet"
+    source.to_parquet(path, index=False)
+    with pytest.raises(ValueError, match="invalid YEAR_MONTH"):
+        build_monthly_series(
+            path, tmp_path / "monthly.parquet", tmp_path / "cohort.csv",
+            tmp_path / "diagnostics.json",
+        )
