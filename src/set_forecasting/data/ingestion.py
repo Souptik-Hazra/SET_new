@@ -135,7 +135,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         con.execute("""
             CREATE TEMP TABLE clean AS
             SELECT trim(CAST(YEAR_MONTH AS VARCHAR)) AS YEAR_MONTH,
-                   strptime(trim(CAST(YEAR_MONTH AS VARCHAR)), '%Y%m')::DATE AS PERIOD,
+                   try_strptime(trim(CAST(YEAR_MONTH AS VARCHAR)), '%Y%m')::DATE AS PERIOD,
                    CAST(ODS_CODE AS VARCHAR) AS ODS_CODE,
                    CAST(VMP_SNOMED_CODE AS VARCHAR) AS VMP_SNOMED_CODE,
                    CAST(UNIT_OF_MEASURE_IDENTIFIER AS VARCHAR) AS UNIT_OF_MEASURE_IDENTIFIER,
