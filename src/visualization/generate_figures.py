@@ -20,9 +20,9 @@ OBSERVED_DEMAND_DISCLAIMER = "Demand observations are observed; inventory outcom
 KEYS = ["ODS_CODE", "VMP_SNOMED_CODE", "UNIT_OF_MEASURE_IDENTIFIER"]
 
 
-def _read_parquet(root: Path, relative: str) -> pd.DataFrame | None:
+def _read_parquet(root: Path, relative: str, columns: list[str] | None = None) -> pd.DataFrame | None:
     path = root / relative
-    return pd.read_parquet(path) if path.is_file() else None
+    return pd.read_parquet(path, columns=columns) if path.is_file() else None
 
 
 def _read_csv(root: Path, relative: str) -> pd.DataFrame | None:
@@ -66,18 +66,12 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
     generated: list[Path] = []
     skipped: dict[str, str] = {}
 
-    series = _read_parquet(root, "data/processed/scmd_monthly_series.parquet")
-    forecasts = _read_parquet(root, "data/processed/forecasts.parquet")
-    reliability = _read_parquet(root, "data/processed/reliability.parquet")
-    scenarios = _read_parquet(root, "data/processed/scenario_streams.parquet")
-    inventory = _read_parquet(root, "data/processed/simulated_inventory.parquet")
-    calibrated = _read_parquet(root, "data/processed/calibrated_risk_probabilities.parquet")
-    brier = _read_csv(root, "output/tables/risk_brier_by_scenario.csv")
-    ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
-    correlations = _read_csv(root, "output/tables/reliability_signal_correlations.csv")
+    # Large Parquet artifacts are loaded lazily, with only columns needed by each plot.
+    brier = ablations = correlations = None
 
     # 1. Observed SCMD quantity distribution: descriptive source-data view, not stock.
     try:
+        series = _read_parquet(root, "data/processed/scmd_monthly_series.parquet", ["PERIOD", "MODEL_DEMAND", "SPLIT", *KEYS])
         if series is None or not {"PERIOD", "MODEL_DEMAND"}.issubset(series.columns):
             raise ValueError("monthly series artifact or required columns unavailable")
         frame = series.copy()
@@ -97,11 +91,13 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.tick_params(axis="x", rotation=45)
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig01_monthly_scmd_quantity.png", "Figure 1 — Observed SCMD demand distribution"))
+        del series, frame, per_series, monthly
     except Exception as exc:
         skipped["fig01_monthly_scmd_quantity.png"] = str(exc)
 
     # 2. Test-split actual quantity against the model median forecast for one real series.
     try:
+        forecasts = _read_parquet(root, "data/processed/forecasts.parquet", KEYS + ["PERIOD", "MODEL_DEMAND", "Q50", "Q10", "Q90", "SPLIT"])
         required = set(KEYS + ["PERIOD", "MODEL_DEMAND", "Q50", "SPLIT"])
         if forecasts is None or not required.issubset(forecasts.columns):
             raise ValueError("forecast artifact missing required columns")
@@ -134,11 +130,13 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend()
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig03_test_quantile_interval.png", "Figure 3 — Observed demand and forecast interval"))
+        del forecasts, frame
     except Exception as exc:
         skipped["fig03_test_quantile_interval.png"] = str(exc)
 
     # 4. Prequential reliability signals for one actual forecast series.
     try:
+        reliability = _read_parquet(root, "data/processed/reliability.parquet", KEYS + ["PERIOD", "R_E", "R_B", "R_C", "R_D"])
         required = set(KEYS + ["PERIOD", "R_E", "R_B", "R_C", "R_D"])
         if reliability is None or not required.issubset(reliability.columns):
             raise ValueError("reliability artifact missing signal columns")
@@ -150,11 +148,14 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend(ncol=4)
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig04_reliability_signals.png", "Figure 4 — Observed-demand reliability signals"))
+        del reliability, frame
     except Exception as exc:
         skipped["fig04_reliability_signals.png"] = str(exc)
 
     # 5. Reliability diagram from held-out test predictions and simulated inventory labels.
     try:
+        calibrated = _read_parquet(root, "data/processed/calibrated_risk_probabilities.parquet", KEYS + ["PERIOD", "SCENARIO_ID", "METHOD", "SHORTAGE_PROBABILITY", "SPLIT"])
+        inventory = _read_parquet(root, "data/processed/simulated_inventory.parquet", KEYS + ["PERIOD", "SCENARIO_ID", "STOCKOUT_LABEL"])
         required = {"PERIOD", "SCENARIO_ID", "METHOD", "SHORTAGE_PROBABILITY", "SPLIT"}
         if calibrated is None or inventory is None or not required.issubset(calibrated.columns):
             raise ValueError("calibrated risk probabilities or inventory labels unavailable")
@@ -177,11 +178,14 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend(fontsize=8)
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig05_simulated_label_calibration.png", "Figure 5 — Calibration against simulated labels"))
+        del calibrated, inventory, frame
     except Exception as exc:
         skipped["fig05_simulated_label_calibration.png"] = str(exc)
 
     # 6. Held-out Brier score by scenario and method.
     try:
+        brier = _read_csv(root, "output/tables/risk_brier_by_scenario.csv")
+        ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
         required = {"SCENARIO_ID", "METHOD", "BRIER_SCORE"}
         if brier is None or not required.issubset(brier.columns):
             raise ValueError("risk_brier_by_scenario.csv missing required columns")
@@ -196,12 +200,13 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend(title="Method", fontsize=8)
         ax.grid(axis="y", alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig06_brier_by_scenario.png", "Figure 6 — Brier scores on simulated outcomes"))
+        del brier, frame, pivot
     except Exception as exc:
         skipped["fig06_brier_by_scenario.png"] = str(exc)
 
     # 7. Scenario-level RADCSR risk distribution from actual saved risk outputs.
     try:
-        risk = _read_parquet(root, "data/processed/radcsr_risk_details.parquet")
+        risk = _read_parquet(root, "data/processed/radcsr_risk_details.parquet", ["SCENARIO_ID", "SPLIT", "RADCSR_PROBABILITY"])
         if risk is None or not {"SCENARIO_ID", "SPLIT", "RADCSR_PROBABILITY"}.issubset(risk.columns):
             raise ValueError("RADCSR risk detail artifact missing required columns")
         frame = risk[(risk["SPLIT"] == "test")].copy()
@@ -212,11 +217,14 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.set(xlabel="Synthetic stress scenario", ylabel="RADCSR risk score")
         fig.suptitle("")
         generated.append(_finish(fig, fig_dir / "fig07_radcsr_risk_by_scenario.png", "Figure 7 — RADCSR risk scores on held-out simulated scenarios"))
+        del risk, frame
     except Exception as exc:
         skipped["fig07_radcsr_risk_by_scenario.png"] = str(exc)
 
     # 8. Inventory outcome summary, explicitly synthetic.
     try:
+        inventory = _read_parquet(root, "data/processed/simulated_inventory.parquet", KEYS + ["PERIOD", "SCENARIO_ID", "STOCKOUT_LABEL", "SHORTAGE_QUANTITY", "DEMAND"])
+        scenarios = _read_parquet(root, "data/processed/scenario_streams.parquet", KEYS + ["PERIOD", "SCENARIO_ID", "SPLIT"])
         required = {"SCENARIO_ID", "STOCKOUT_LABEL", "SHORTAGE_QUANTITY", "DEMAND"}
         if inventory is None or not required.issubset(inventory.columns):
             raise ValueError("simulated inventory artifact missing required columns")
@@ -245,6 +253,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         for ax in axes:
             ax.grid(axis="y", alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig08_simulated_inventory_outcomes.png", "Figure 8 — Simulated inventory outcomes (not observed events)"))
+        del inventory, scenarios, frame, summary
     except Exception as exc:
         skipped["fig08_simulated_inventory_outcomes.png"] = str(exc)
 
@@ -263,11 +272,13 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend(title="Ablation", fontsize=8)
         ax.grid(axis="y", alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig09_radcsr_ablation.png", "Figure 9 — RADCSR ablation on simulated outcomes"))
+        del ablations, frame, pivot
     except Exception as exc:
         skipped["fig09_radcsr_ablation.png"] = str(exc)
 
     # 10. Empirical correlation matrix of the four saved reliability signals.
     try:
+        correlations = _read_csv(root, "output/tables/reliability_signal_correlations.csv")
         if correlations is None or correlations.empty:
             raise ValueError("reliability_signal_correlations.csv unavailable")
         matrix = correlations.set_index(correlations.columns[0])
@@ -285,6 +296,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
                     ax.text(j, i, f"{value:.2f}", ha="center", va="center", fontsize=9)
         fig.colorbar(image, ax=ax, label="Pearson correlation")
         generated.append(_finish(fig, fig_dir / "fig10_reliability_signal_correlations.png", "Figure 10 — Observed-demand reliability signal correlations"))
+        del correlations, matrix
     except Exception as exc:
         skipped["fig10_reliability_signal_correlations.png"] = str(exc)
 
