@@ -210,8 +210,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                      THEN N_OBSERVED::DOUBLE / N_NONZERO ELSE 'Infinity'::DOUBLE END AS ADI,
                 CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0
                      THEN pow(POS_STD / POS_MEAN, 2) ELSE 0 END AS CV2,
-                CASE WHEN POS_COUNT = 0 THEN 'Smooth'
-                     WHEN (N_OBSERVED::DOUBLE / N_NONZERO) < 1.32 AND
+                CASE WHEN (N_OBSERVED::DOUBLE / N_NONZERO) < 1.32 AND
                           CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Smooth'
                      WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 THEN 'Erratic'
                      WHEN CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Intermittent'
@@ -291,7 +290,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                    OBSERVATION_MISSING,
                    MODEL_DEMAND, DEMAND_NET, DEMAND,
                    DEMAND AS DEMAND_CLEAN,
-                   (MODEL_DEMAND > COHORT_UPPER_FENCE) AS EXTREME_FLAG,
+                   coalesce(MODEL_DEMAND > COHORT_UPPER_FENCE, false) AS EXTREME_FLAG,
                    CASE WHEN SPLIT_INDEX <= N_TRAIN THEN 'train'
                         WHEN SPLIT_INDEX <= N_TRAIN + N_VAL THEN 'validation'
                         ELSE 'test' END AS SPLIT,
