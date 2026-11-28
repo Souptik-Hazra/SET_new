@@ -169,3 +169,15 @@ def test_notebook_contains_and_installs_forecasting_implementation():
 def test_model_fingerprint_includes_notebook_forecasting_source():
     helper = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
     assert 'model_code.append("notebooks/SET_Pharma_Colab_Pipeline.ipynb")' in helper
+
+
+def test_ingestion_exposes_duckdb_and_cohort_progress():
+    ingestion = (ROOT / "src" / "set_forecasting" / "data" / "ingestion.py").read_text(encoding="utf-8")
+    runtime = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
+    assert '"enable_progress_bar": "true"' in ingestion
+    assert '"progress_bar_time": "1000ms"' in ingestion
+    assert "tqdm.auto" in ingestion
+    assert "total=grouped.ngroups" in ingestion
+    assert "retained=retained_series" in ingestion
+    assert "[STAGE WORK COMPLETE]" in runtime
+    assert "elapsed_seconds" in runtime
