@@ -262,6 +262,8 @@ def model_fingerprint(bootstrap: int, seed: int) -> str:
         for path in (ROOT / "src" / "set_forecasting").rglob("*.py")
         if "validation" not in path.relative_to(ROOT).parts
     ]
+    # The active Colab forecasting implementation is maintained in this notebook.
+    model_code.append("notebooks/SET_Pharma_Colab_Pipeline.ipynb")
     return run_fingerprint(
         series_path, params,
         code_paths=model_code + ["src/set_forecasting/config.py", "scripts/colab_runtime.py"],
