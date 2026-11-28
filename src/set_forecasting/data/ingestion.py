@@ -51,7 +51,7 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
     # Native DuckDB progress reports CSV scan/aggregation progress and ETA.
     con = duckdb.connect(config={
         "enable_progress_bar": "true",
-        "progress_bar_time": "1000ms",
+        "progress_bar_time": 1000,
     })
     escaped = str(source).replace("'", "''")
     query = f"""
@@ -106,7 +106,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     temp_series = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
     temp_series.unlink(missing_ok=True)
 
-    con = duckdb.connect(config={"enable_progress_bar": "true", "progress_bar_time": "1000ms"})
+    con = duckdb.connect(config={"enable_progress_bar": "true", "progress_bar_time": 1000})
     agg_file = str(aggregated_path.resolve()).replace("'", "''")
     temp_file = str(temp_series.resolve()).replace("'", "''")
     try:
