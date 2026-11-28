@@ -116,6 +116,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
 
     # 3. Test-split quantile interval for the same highest-volume available series.
     try:
+        forecasts = _read_parquet(root, "data/processed/forecasts.parquet", KEYS + ["PERIOD", "MODEL_DEMAND", "Q50", "Q10", "Q90", "SPLIT"])
         required = set(KEYS + ["PERIOD", "MODEL_DEMAND", "Q10", "Q50", "Q90", "SPLIT"])
         if forecasts is None or not required.issubset(forecasts.columns):
             raise ValueError("forecast artifact missing Q10/Q50/Q90 columns")
