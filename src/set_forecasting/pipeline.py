@@ -113,13 +113,31 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     allowed_splits = {"train", "validation", "test"}
     if not set(series.SPLIT.astype(str)).issubset(allowed_splits):
         raise ValueError("SPLIT must contain only train, validation and test")
-    for key, group in series.groupby(KEYS, sort=False, dropna=False):
-        bounds = {name: group.loc[group.SPLIT == name, "PERIOD"] for name in allowed_splits}
-        if any(bounds[name].empty for name in allowed_splits):
-            raise ValueError(f"Series {key} does not contain all chronological splits")
-        if not (bounds["train"].max() < bounds["validation"].min() and
-                bounds["validation"].max() < bounds["test"].min()):
-            raise ValueError(f"Chronological split overlap/order violation for series {key}")
+    # Validate split coverage/order with grouped reductions rather than a
+    # Python loop over every medicine-trust series (the full cohort has >100k).
+    split_bounds = (
+        series.groupby(KEYS + ["SPLIT"], sort=False, observed=True)["PERIOD"]
+        .agg(["min", "max"])
+        .unstack("SPLIT")
+    )
+    missing_split_columns = allowed_splits - set(split_bounds.columns.get_level_values(1))
+    if missing_split_columns:
+        raise ValueError(
+            f"Monthly series is missing chronological split(s): {sorted(missing_split_columns)}"
+        )
+    split_min = split_bounds["min"]
+    split_max = split_bounds["max"]
+    incomplete = split_min[list(allowed_splits)].isna().any(axis=1)
+    if incomplete.any():
+        key = incomplete[incomplete].index[0]
+        raise ValueError(f"Series {key} does not contain all chronological splits")
+    invalid_order = (
+        (split_max["train"] >= split_min["validation"]) |
+        (split_max["validation"] >= split_min["test"])
+    )
+    if invalid_order.any():
+        key = invalid_order[invalid_order].index[0]
+        raise ValueError(f"Chronological split overlap/order violation for series {key}")
     features,pred,forecast_metrics,forecast_report=train_and_predict(series,random_state=int(seed),winsor_quantile=float(data_cfg.get("winsor_quantile",.995)))
     if not pred.empty and "FORECAST_MODEL" not in pred:
         raise RuntimeError("Forecast predictions are missing FORECAST_MODEL provenance.")
@@ -152,16 +170,31 @@ def run_model_pipeline(series_path="data/processed/scmd_monthly_series.parquet",
     })
     _stamp_observed_demand_frame(features).to_parquet(proc/"features.parquet",index=False);_stamp_observed_demand_frame(pred).to_parquet(proc/"forecasts.parquet",index=False)
     forecast_metrics.to_csv(out/"tables/forecast_metrics.csv",index=False)
-    test_pred=pred[pred.SPLIT=="test"].copy() if "SPLIT" in pred else pred
-    per_series=[]
-    for key,g in test_pred.groupby(KEYS,sort=False,dropna=False):
-        y=g.MODEL_DEMAND.to_numpy(float);q=g.Q50.to_numpy(float)
-        valid=np.isfinite(y)&np.isfinite(q)
-        y_valid=y[valid];q_valid=q[valid]
-        per_series.append(dict(zip(KEYS,key),N_TEST=int(valid.sum()),
-            WAPE=float(np.abs(y_valid-q_valid).sum()/max(np.abs(y_valid).sum(),1e-9)*100) if valid.any() else np.nan,
-            MAE=float(np.mean(np.abs(y_valid-q_valid))) if valid.any() else np.nan))
-    per_series=pd.DataFrame(per_series)
+    test_pred = pred.loc[pred.SPLIT.eq("test"), KEYS + ["MODEL_DEMAND", "Q50"]]
+    metric_rows = test_pred.assign(
+        _ABS_ERROR=lambda frame: (
+            pd.to_numeric(frame["MODEL_DEMAND"], errors="coerce") -
+            pd.to_numeric(frame["Q50"], errors="coerce")
+        ).abs(),
+        _ABS_DEMAND=lambda frame: pd.to_numeric(
+            frame["MODEL_DEMAND"], errors="coerce"
+        ).abs(),
+    )
+    per_series = (
+        metric_rows.groupby(KEYS, sort=False, dropna=False)
+        .agg(
+            N_TEST=("_ABS_ERROR", "count"),
+            _ERROR_SUM=("_ABS_ERROR", "sum"),
+            _DEMAND_SUM=("_ABS_DEMAND", "sum"),
+            MAE=("_ABS_ERROR", "mean"),
+        )
+        .reset_index()
+    )
+    per_series["WAPE"] = (
+        per_series["_ERROR_SUM"] /
+        per_series["_DEMAND_SUM"].clip(lower=1e-9) * 100
+    )
+    per_series = per_series.drop(columns=["_ERROR_SUM", "_DEMAND_SUM"])
     per_series.to_csv(out/"tables/per_series_forecast_metrics.csv",index=False)
     outlier_count=int(features.get("OUTLIER_995_FLAG",pd.Series(dtype=bool)).fillna(False).sum())
     outlier_summary=features.groupby(KEYS,as_index=False).agg(WINSOR_LIMIT_995=("WINSOR_LIMIT_995","first"),OUTLIER_COUNT=("OUTLIER_995_FLAG","sum"),N_PERIODS=("PERIOD","size"))
