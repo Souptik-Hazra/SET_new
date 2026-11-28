@@ -396,7 +396,51 @@ def test_ingestion_persists_filtered_series_with_chronological_splits(tmp_path):
     assert saved.groupby(KEYS).size().eq(24).all()
     assert report["series_retained"] == 2
     assert "DuckDB SQL performs" in report["memory_strategy"]
+    assert report["duckdb_memory_limit"]
+    assert report["duckdb_temp_directory"]
+    assert report["monthly_parquet_bytes"] == series_path.stat().st_size
 
+
+
+
+def test_aggregate_scmd_uses_explicit_string_schema_and_atomic_parquet(tmp_path):
+    from src.set_forecasting.data.ingestion import aggregate_scmd
+
+    source = tmp_path / "source.csv"
+    rows = pd.DataFrame([
+        {
+            "YEAR_MONTH": "202401",
+            "ODS_CODE": "0001",
+            "VMP_SNOMED_CODE": "0000123",
+            "VMP_PRODUCT_NAME": "Medicine",
+            "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+            "UNIT_OF_MEASURE_NAME": "tablet",
+            "TOTAL_QUANITY_IN_VMP_UNIT": "10",
+            "INDICATIVE_COST": "20.5",
+        },
+        {
+            "YEAR_MONTH": "202401",
+            "ODS_CODE": "0001",
+            "VMP_SNOMED_CODE": "0000123",
+            "VMP_PRODUCT_NAME": "Medicine",
+            "UNIT_OF_MEASURE_IDENTIFIER": "U1",
+            "UNIT_OF_MEASURE_NAME": "tablet",
+            "TOTAL_QUANITY_IN_VMP_UNIT": "5",
+            "INDICATIVE_COST": "10.0",
+        },
+    ])
+    rows.to_csv(source, index=False)
+
+    output = aggregate_scmd(source, tmp_path / "aggregated.parquet")
+    result = pd.read_parquet(output)
+
+    assert len(result) == 1
+    assert result.loc[0, "ODS_CODE"] == "0001"
+    assert result.loc[0, "VMP_SNOMED_CODE"] == "0000123"
+    assert result.loc[0, "SOURCE_RECORDS"] == 2
+    assert result.loc[0, "POSITIVE_QUANTITY"] == 15
+    assert output.is_file()
+    assert not output.with_name(output.stem + ".tmp" + output.suffix).exists()
 
 def test_inventory_excludes_receipt_due_after_current_lead_time_window():
     x = sample(3).copy()
