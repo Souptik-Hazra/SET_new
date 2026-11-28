@@ -51,9 +51,9 @@ def test_notebook_imports_the_runtime_and_uses_all_stage_entrypoints():
 def test_notebook_branch_and_dataset_paths_match_repository_contract():
     notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
     assert 'BRANCH = "feature/colab-pipeline-execution"' in notebook_source
-    assert 'DEFAULT_NOTEBOOK_COMMIT = "4fec511e61956887559d297eb861f1414d2f5be6"' in notebook_source
-    assert 'git", "checkout", NOTEBOOK_COMMIT' in notebook_source
-    assert "WARNING: NOTEBOOK_COMMIT override active" in notebook_source
+    assert 'git", "checkout", "--detach", f"origin/{BRANCH}"' in notebook_source
+    assert "DEFAULT_NOTEBOOK_COMMIT" not in notebook_source
+    assert "NOTEBOOK_COMMIT" not in notebook_source
     assert 'REPO_DIR = Path("/content/SET_new")' in notebook_source
     assert 'DRIVE_RAW_CSV = Path("/content/drive/MyDrive/Dataset/combined_secondary_care_medicines.csv")' in notebook_source
     assert 'LOCAL_RAW_CSV = REPO_DIR / "data" / "raw" / "combined_secondary_care_medicines.csv"' in notebook_source
@@ -147,15 +147,17 @@ def test_notebook_defaults_to_fresh_artifacts_and_makes_restore_opt_in():
 
 
 
-def test_notebook_contains_and_wires_canonical_model_training_implementation():
-    notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
-    assert "def create_features(data):" in notebook_source
-    assert "def train_and_predict(" in notebook_source
-    assert 'objective="quantile"' in notebook_source
-    assert "for quantile in (.1,.5,.9):" in notebook_source
-    assert "_pipeline_module.train_and_predict = train_and_predict" in notebook_source
-    assert "not invoked by the active SCMD monthly pipeline" in "\n".join(
+def test_notebook_uses_canonical_model_modules_without_duplicate_implementations():
+    notebook = load_notebook()
+    notebook_source = "\\n".join(source for _, source in code_cells(notebook))
+    markdown_source = "\\n".join(
         "".join(cell.get("source", []))
-        for cell in load_notebook()["cells"]
+        for cell in notebook["cells"]
         if cell.get("cell_type") == "markdown"
     )
+    assert "def create_features(data):" not in notebook_source
+    assert "def train_and_predict(" not in notebook_source
+    assert "_pipeline_module.train_and_predict" not in notebook_source
+    assert "src/set_forecasting/forecasting/model.py" in markdown_source
+    assert "src/set_forecasting/features/engineering.py" in markdown_source
+    assert "not called by the active monthly SCMD pipeline" in markdown_source
