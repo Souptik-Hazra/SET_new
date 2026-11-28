@@ -144,3 +144,18 @@ def test_notebook_defaults_to_fresh_artifacts_and_makes_restore_opt_in():
     assert "if RESTORE_CHECKPOINTS:" in notebook_source
     assert 'for relative in ("data/processed", "output"):' in notebook_source
     assert "shutil.rmtree(target)" in notebook_source
+
+
+
+def test_notebook_contains_and_wires_canonical_model_training_implementation():
+    notebook_source = "\n".join(source for _, source in code_cells(load_notebook()))
+    assert "def create_features(data):" in notebook_source
+    assert "def train_and_predict(" in notebook_source
+    assert 'objective="quantile"' in notebook_source
+    assert "for quantile in (.1,.5,.9):" in notebook_source
+    assert "_pipeline_module.train_and_predict = train_and_predict" in notebook_source
+    assert "not invoked by the active SCMD monthly pipeline" in "\n".join(
+        "".join(cell.get("source", []))
+        for cell in load_notebook()["cells"]
+        if cell.get("cell_type") == "markdown"
+    )
