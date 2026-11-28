@@ -185,18 +185,13 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                           N_PERIODS - floor(RAW_TRAIN) - floor(RAW_VAL) - floor(RAW_TEST) AS REMAINDER
                 FROM split_raw
             ), split_rank AS (
-                SELECT *, row_number() OVER (
-                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
-                    ORDER BY (RAW_TRAIN-BASE_TRAIN) DESC, 1
-                ) AS RANK_TRAIN,
-                row_number() OVER (
-                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
-                    ORDER BY (RAW_VAL-BASE_VAL) DESC, 2
-                ) AS RANK_VAL,
-                row_number() OVER (
-                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
-                    ORDER BY (RAW_TEST-BASE_TEST) DESC, 3
-                ) AS RANK_TEST
+                SELECT *,
+                    1 + CASE WHEN RAW_VAL-BASE_VAL > RAW_TRAIN-BASE_TRAIN THEN 1 ELSE 0 END
+                      + CASE WHEN RAW_TEST-BASE_TEST > RAW_TRAIN-BASE_TRAIN THEN 1 ELSE 0 END AS RANK_TRAIN,
+                    1 + CASE WHEN RAW_TRAIN-BASE_TRAIN >= RAW_VAL-BASE_VAL THEN 1 ELSE 0 END
+                      + CASE WHEN RAW_TEST-BASE_TEST > RAW_VAL-BASE_VAL THEN 1 ELSE 0 END AS RANK_VAL,
+                    1 + CASE WHEN RAW_TRAIN-BASE_TRAIN >= RAW_TEST-BASE_TEST THEN 1 ELSE 0 END
+                      + CASE WHEN RAW_VAL-BASE_VAL >= RAW_TEST-BASE_TEST THEN 1 ELSE 0 END AS RANK_TEST
                 FROM split_floor
             )
             SELECT *,
@@ -256,8 +251,8 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                     coalesce(NEGATIVE_COST_RECORDS, 0) AS NEGATIVE_COST_FILLED,
                     last_value(VMP_PRODUCT_NAME IGNORE NULLS) OVER w AS PRODUCT_FF,
                     last_value(UNIT_OF_MEASURE_NAME IGNORE NULLS) OVER w AS UNIT_FF,
-                    first_value(VMP_PRODUCT_NAME IGNORE NULLS) OVER w AS PRODUCT_BF,
-                    first_value(UNIT_OF_MEASURE_NAME IGNORE NULLS) OVER w AS UNIT_BF,
+                    first_value(VMP_PRODUCT_NAME IGNORE NULLS) OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER ORDER BY PERIOD ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS PRODUCT_BF,
+                    first_value(UNIT_OF_MEASURE_NAME IGNORE NULLS) OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER ORDER BY PERIOD ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS UNIT_BF,
                     row_number() OVER w AS PERIOD_INDEX
                 FROM joined
                 WINDOW w AS (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER ORDER BY PERIOD
@@ -279,12 +274,12 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                 FROM demand
             ), split AS (
                 SELECT m.*, s.N_PERIODS, s.N_OBSERVED, s.N_NONZERO, s.ADI, s.CV2, s.DEMAND_CLASS,
-                       s.N_TRAIN, s.N_VAL, s.N_TEST,
+                       s.N_TRAIN, s.N_VAL, s.N_TEST, s.FIRST_PERIOD,
                        (s.Q3 + 3.0*(s.Q3-s.Q1)) AS COHORT_UPPER_FENCE,
                        row_number() OVER (PARTITION BY m.ODS_CODE,m.VMP_SNOMED_CODE,m.UNIT_OF_MEASURE_IDENTIFIER ORDER BY m.PERIOD) AS SPLIT_INDEX
                 FROM fenced m JOIN cohort_stats s USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
             )
-            SELECT YEAR_MONTH, ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER,
+            SELECT strftime(PERIOD, '%Y%m') AS YEAR_MONTH, ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER,
                    coalesce(PRODUCT_NAME_FILLED, '') AS VMP_PRODUCT_NAME,
                    coalesce(UNIT_NAME_FILLED, '') AS UNIT_OF_MEASURE_NAME,
                    PERIOD, SOURCE_RECORDS_FILLED AS SOURCE_RECORDS,
@@ -300,9 +295,9 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                    CASE WHEN SPLIT_INDEX <= N_TRAIN THEN 'train'
                         WHEN SPLIT_INDEX <= N_TRAIN + N_VAL THEN 'validation'
                         ELSE 'test' END AS SPLIT,
-                   (PERIOD + (N_TRAIN-1) * INTERVAL 1 MONTH)::DATE AS TRAIN_END,
-                   (PERIOD + (N_TRAIN+N_VAL-1) * INTERVAL 1 MONTH)::DATE AS VALIDATION_END,
-                   (PERIOD + (N_TRAIN+N_VAL) * INTERVAL 1 MONTH)::DATE AS TEST_START,
+                   (FIRST_PERIOD + (N_TRAIN-1) * INTERVAL 1 MONTH)::DATE AS TRAIN_END,
+                   (FIRST_PERIOD + (N_TRAIN+N_VAL-1) * INTERVAL 1 MONTH)::DATE AS VALIDATION_END,
+                   (FIRST_PERIOD + (N_TRAIN+N_VAL) * INTERVAL 1 MONTH)::DATE AS TEST_START,
                    'OBSERVED_DEMAND' AS DATA_TYPE,
                    '{OBSERVED_DEMAND_DISCLAIMER}' AS DISCLAIMER
             FROM split
