@@ -259,6 +259,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
 
     # 9. RADCSR component ablation from the current pipeline table.
     try:
+        ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
         required = {"SCENARIO_ID", "METHOD", "BRIER_SCORE"}
         if ablations is None or not required.issubset(ablations.columns):
             raise ValueError("phase7_ablation_metrics.csv missing required columns")
@@ -272,7 +273,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.legend(title="Ablation", fontsize=8)
         ax.grid(axis="y", alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig09_radcsr_ablation.png", "Figure 9 — RADCSR ablation on simulated outcomes"))
-        del ablations, frame, pivot
+        del ablations, pivot
     except Exception as exc:
         skipped["fig09_radcsr_ablation.png"] = str(exc)
 
