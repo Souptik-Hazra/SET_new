@@ -181,7 +181,7 @@ def test_require_stage_rejects_missing_or_stale_upstream_checkpoint(tmp_path, mo
 
 
 
-def test_python_313_is_required(monkeypatch):
+def test_python_313_x_is_required_and_accepts_colab_patch(monkeypatch):
     from types import SimpleNamespace
     import pytest
 
@@ -190,12 +190,12 @@ def test_python_313_is_required(monkeypatch):
         SimpleNamespace(major=3, minor=12, micro=0),
     )
     monkeypatch.delenv("SET_ALLOW_UNSUPPORTED_PYTHON", raising=False)
-    with pytest.raises(RuntimeError, match="requires Python 3.13.18"):
+    with pytest.raises(RuntimeError, match="requires Python 3.13.x"):
         colab_runtime.assert_supported_python()
 
     monkeypatch.setattr(
         colab_runtime.sys, "version_info",
-        SimpleNamespace(major=3, minor=13, micro=18),
+        SimpleNamespace(major=3, minor=13, micro=16),
     )
     result = colab_runtime.assert_supported_python()
     assert result["python_supported"] is True
