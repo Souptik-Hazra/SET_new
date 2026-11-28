@@ -207,11 +207,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                      ) < 1 THEN 'insufficient_rows_for_three_way_split'
                      ELSE '' END AS EXCLUSION_REASON,
                 CASE WHEN N_PERIODS > 0 AND N_NONZERO > 0
-                     THEN N_PERIODS::DOUBLE / N_NONZERO ELSE 'Infinity'::DOUBLE END AS ADI,
+                     THEN N_OBSERVED::DOUBLE / N_NONZERO ELSE 'Infinity'::DOUBLE END AS ADI,
                 CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0
                      THEN pow(POS_STD / POS_MEAN, 2) ELSE 0 END AS CV2,
                 CASE WHEN POS_COUNT = 0 THEN 'Smooth'
-                     WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 AND
+                     WHEN (N_OBSERVED::DOUBLE / N_NONZERO) < 1.32 AND
                           CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Smooth'
                      WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 THEN 'Erratic'
                      WHEN CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Intermittent'
@@ -316,9 +316,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                    coalesce(x.EXTREME_COUNT,0) AS EXTREME_COUNT,
                    'OBSERVED_DEMAND' AS DATA_TYPE, ? AS DISCLAIMER
             FROM cohort_stats s LEFT JOIN (
-                SELECT ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER,
-                       count(*) FILTER (WHERE MODEL_DEMAND > COHORT_UPPER_FENCE) AS EXTREME_COUNT
-                FROM monthly GROUP BY ALL
+                SELECT c.ODS_CODE,c.VMP_SNOMED_CODE,c.UNIT_OF_MEASURE_IDENTIFIER,
+                       count(*) FILTER (WHERE a.POSITIVE_QUANTITY > c.Q3 + 3.0*(c.Q3-c.Q1)) AS EXTREME_COUNT
+                FROM cohort_stats c JOIN clean a USING
+                    (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
+                GROUP BY ALL
             ) x USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
         """, [OBSERVED_DEMAND_DISCLAIMER]).df()
 
