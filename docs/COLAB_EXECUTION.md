@@ -6,7 +6,7 @@
 
 ## Setup
 
-The supported Colab and CI interpreter is **Python 3.13.18**. The notebook, runtime helper and canonical model pipeline require this exact patch version.
+The supported Colab and CI interpreter is **Python 3.13.x**. Any 3.13 patch release (including Colab's 3.13.16) is accepted; Python 3.12 and 3.14 are not supported.
 
 1. Push/check out `feature/colab-pipeline-execution`.
 2. Upload the authorised SCMD source CSV to Google Drive at:
