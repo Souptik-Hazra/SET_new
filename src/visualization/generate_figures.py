@@ -186,7 +186,6 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
     # 6. Held-out Brier score by scenario and method.
     try:
         brier = _read_csv(root, "output/tables/risk_brier_by_scenario.csv")
-        ablations = _read_csv(root, "output/tables/phase7_ablation_metrics.csv")
         required = {"SCENARIO_ID", "METHOD", "BRIER_SCORE"}
         if brier is None or not required.issubset(brier.columns):
             raise ValueError("risk_brier_by_scenario.csv missing required columns")
