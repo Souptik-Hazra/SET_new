@@ -4,6 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import shutil
+import time
 from pathlib import Path
 
 import duckdb
@@ -42,17 +45,45 @@ def _allocate_split_counts(n_periods, fractions):
     counts[order[:remainder]] += 1
     return tuple(int(value) for value in counts)
 
+def _configure_duckdb(con, work_dir):
+    """Bound DuckDB memory and direct spill files to local processing storage."""
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import psutil
+        available_gb = psutil.virtual_memory().available / (1024 ** 3)
+        memory_gb = max(2, min(available_gb * 0.65, 12))
+    except ImportError:
+        memory_gb = 6
+    free_gb = shutil.disk_usage(work_dir).free / (1024 ** 3)
+    if free_gb < 3:
+        raise RuntimeError(f"DuckDB needs at least 3 GB free for temporary processing; only {free_gb:.2f} GB available at {work_dir}")
+    temp_cap_gb = max(1, free_gb * 0.70)
+    con.execute(f"SET memory_limit = '{memory_gb:.1f}GB'")
+    con.execute(f"SET temp_directory = '{str(work_dir.resolve()).replace(chr(39), chr(39)*2)}'")
+    con.execute(f"SET max_temp_directory_size = '{temp_cap_gb:.1f}GB'")
+    con.execute("SET enable_progress_bar = true")
+    con.execute("SET progress_bar_time = 1000")
+    con.execute(f"SET threads = {max(1, min(os.cpu_count() or 2, 4))}")
+    logger.info("DuckDB resources: memory_limit=%.1f GB, temp_limit=%.1f GB, temp_dir=%s", memory_gb, temp_cap_gb, work_dir)
+
+
 def aggregate_scmd(path, output_path, chunksize=200_000):
     """Aggregate raw rows with DuckDB; IDs are read as VARCHAR."""
     source = get_scmd_path(path)
-    validate_scmd_header(source)
+    header = validate_scmd_header(source)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    # Native DuckDB progress reports CSV scan/aggregation progress and ETA.
+    temp_output = output_path.with_name(output_path.stem + ".tmp" + output_path.suffix)
+    temp_output.unlink(missing_ok=True)
+    work_dir = output_path.parent / ".duckdb_tmp"
     con = duckdb.connect()
-    con.execute("SET enable_progress_bar = true")
-    con.execute("SET progress_bar_time = 1000")
+    _configure_duckdb(con, work_dir)
     escaped = str(source).replace("'", "''")
+    escaped_output = str(temp_output.resolve()).replace("'", "''")
+    column_spec = "{" + ", ".join("'" + name.replace("'", "''") + "': 'VARCHAR'" for name in header) + "}"
+    started = time.monotonic()
+    logger.info("[INGEST 1/2] CSV scan and business-key aggregation started: %s (%.2f GB)", source, source.stat().st_size / 1024**3)
     query = f"""
       SELECT
         trim(YEAR_MONTH) AS YEAR_MONTH,
@@ -74,11 +105,13 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
         count(*) FILTER (WHERE try_cast(nullif(trim(INDICATIVE_COST), '') AS DOUBLE) < 0)::BIGINT AS NEGATIVE_COST_RECORDS,
         'OBSERVED_DEMAND' AS DATA_TYPE,
         'Demand observations are observed; inventory outcomes and stockout labels are SIMULATED.' AS DISCLAIMER
-      FROM read_csv_auto('{escaped}', header=true, all_varchar=true, sample_size=-1)
+      FROM read_csv('{escaped}', header=true, columns={column_spec})
       GROUP BY 1,2,3,5
     """
     try:
-        con.execute(f"COPY ({query}) TO '{str(output_path).replace(chr(39), chr(39)*2)}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        con.execute(f"COPY ({query}) TO '{escaped_output}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        temp_output.replace(output_path)
+        logger.info("[INGEST 1/2] Aggregation complete in %.1f minutes; output=%.2f GB", (time.monotonic()-started)/60, output_path.stat().st_size/1024**3)
     finally:
         con.close()
     return output_path
@@ -105,9 +138,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     temp_series = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
     temp_series.unlink(missing_ok=True)
 
+    work_dir = series_path.parent / ".duckdb_tmp"
     con = duckdb.connect()
-    con.execute("SET enable_progress_bar = true")
-    con.execute("SET progress_bar_time = 1000")
+    _configure_duckdb(con, work_dir)
+    started = time.monotonic()
+    logger.info("[INGEST 2/2] Monthly cohort construction started from %s", aggregated_path)
     agg_file = str(aggregated_path.resolve()).replace("'", "''")
     temp_file = str(temp_series.resolve()).replace("'", "''")
     try:
@@ -266,18 +301,12 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                           CASE WHEN OBSERVATION_MISSING THEN NULL ELSE NET_FILLED END AS DEMAND_NET,
                           CASE WHEN OBSERVATION_MISSING THEN NULL ELSE POSITIVE_FILLED END AS DEMAND
                 FROM bounds
-            ), fenced AS (
-                SELECT *, quantile_cont(MODEL_DEMAND, .25) FILTER (WHERE NOT OBSERVATION_MISSING)
-                            OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER) AS DQ1,
-                          quantile_cont(MODEL_DEMAND, .75) FILTER (WHERE NOT OBSERVATION_MISSING)
-                            OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER) AS DQ3
-                FROM demand
             ), split AS (
                 SELECT m.*, s.N_PERIODS, s.N_OBSERVED, s.N_NONZERO, s.ADI, s.CV2, s.DEMAND_CLASS,
                        s.N_TRAIN, s.N_VAL, s.N_TEST, s.FIRST_PERIOD,
                        (s.Q3 + 3.0*(s.Q3-s.Q1)) AS COHORT_UPPER_FENCE,
                        row_number() OVER (PARTITION BY m.ODS_CODE,m.VMP_SNOMED_CODE,m.UNIT_OF_MEASURE_IDENTIFIER ORDER BY m.PERIOD) AS SPLIT_INDEX
-                FROM fenced m JOIN cohort_stats s USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
+                FROM demand m JOIN cohort_stats s USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
             )
             SELECT strftime(PERIOD, '%Y%m') AS YEAR_MONTH, ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER,
                    coalesce(PRODUCT_NAME_FILLED, '') AS VMP_PRODUCT_NAME,
@@ -303,8 +332,9 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
             FROM split
         """)
 
-        con.execute(f"COPY (SELECT * FROM monthly ORDER BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER,PERIOD) TO '{temp_file}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        con.execute(f"COPY (SELECT * FROM monthly) TO '{temp_file}' (FORMAT PARQUET, COMPRESSION ZSTD)")
         temp_series.replace(series_path)
+        logger.info("[INGEST 2/2] Monthly Parquet written in %.1f minutes (%.2f GB)", (time.monotonic()-started)/60, series_path.stat().st_size/1024**3)
 
         cohort = con.execute("""
             SELECT s.ODS_CODE, s.VMP_SNOMED_CODE, s.UNIT_OF_MEASURE_IDENTIFIER,
@@ -377,7 +407,10 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
             "missing_or_invalid_cost_records": int(totals[6] or 0),
             "negative_cost_records": int(totals[7] or 0),
             "demand_class_distribution": cohort.loc[cohort.COHORT_INCLUDED,"DEMAND_CLASS"].value_counts().to_dict(),
-            "memory_strategy": "DuckDB SQL performs cohort statistics, monthly calendar expansion, chronological split assignment and direct Parquet writing; pandas materialises only the compact cohort and monthly summary reports.",
+            "memory_strategy": "DuckDB SQL performs cohort statistics, monthly calendar expansion, chronological split assignment and direct Parquet writing; DuckDB memory is bounded and excess work spills to a configured local temp directory; pandas materialises only compact reports.",
+            "duckdb_memory_limit": con.execute("SELECT current_setting('memory_limit')").fetchone()[0],
+            "duckdb_temp_directory": con.execute("SELECT current_setting('temp_directory')").fetchone()[0],
+            "monthly_parquet_bytes": series_path.stat().st_size,
             "DATA_TYPE": "OBSERVED_DEMAND",
             "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
             "note": "Missing month rows are flagged, not interpreted as observed zero demand. MODEL_DEMAND is NULL for unobserved months; negative and net movements remain separately available."
@@ -385,6 +418,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         with open(diagnostics_path,"w",encoding="utf-8") as stream:
             json.dump(report,stream,indent=2,default=str)
         returned = con.execute(f"SELECT * FROM read_parquet('{str(series_path.resolve()).replace(chr(39), chr(39)*2)}')").df() if load_series else None
+        logger.info("[INGEST 2/2] Cohort construction and diagnostics complete in %.1f minutes", (time.monotonic()-started)/60)
         return returned, cohort, report
     finally:
         con.close()
