@@ -84,6 +84,7 @@ def train_and_predict(series, min_train_rows=100, random_state=42, winsor_quanti
 
     features = create_features(x)
     features["MODEL_DEMAND"] = features["_ORIGINAL_MODEL_DEMAND"]
+    features.drop(columns=["_ORIGINAL_MODEL_DEMAND"], inplace=True)
     features["SERIES_ID"] = features[SERIES_KEYS].astype(str).agg("|".join, axis=1)
     categorical = []
     for column in SERIES_KEYS:
@@ -121,7 +122,7 @@ def train_and_predict(series, min_train_rows=100, random_state=42, winsor_quanti
                 estimator = LGBMRegressor(
                     objective="quantile", alpha=quantile, n_estimators=800,
                     learning_rate=.03, num_leaves=31, min_child_samples=30,
-                    subsample=.85, colsample_bytree=.85, max_bin=127,
+                    subsample=.85, subsample_freq=1, colsample_bytree=.85, max_bin=127,
                     force_col_wise=True, verbosity=-1, random_state=random_state,
                     n_jobs=model_threads,
                 )
