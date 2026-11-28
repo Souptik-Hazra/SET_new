@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`notebooks/SET_Pharma_Colab_Pipeline.ipynb` is an execution interface for the existing SET Pharma Python package. Forecasting, feature engineering, reliability, RADCSR, calibration, simulation and mathematical validation remain implemented in `src/`; the notebook does not maintain duplicate model code.
+`notebooks/SET_Pharma_Colab_Pipeline.ipynb` contains the active Colab feature-engineering and forecasting implementation, including the quantile LightGBM Q10/Q50/Q90 models, previous-observation and seasonal-naive baselines, and the explicit naive fallback. The notebook installs its `train_and_predict()` implementation into the existing pipeline entry point before model execution. Ingestion, reliability estimation, RADCSR, inventory simulation, calibration, statistical inference and mathematical validation remain in `src/`. The CLI continues to use the canonical Python forecasting modules.
 
 ## Setup
 
