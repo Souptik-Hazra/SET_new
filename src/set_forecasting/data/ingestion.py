@@ -87,239 +87,310 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
 def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_path,
                          min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
                          test_frac=.20, load_series=True):
-    """Build and persist the retained monthly cohort one series at a time.
+    """Construct the monthly cohort entirely in DuckDB SQL.
 
-    Only the compact aggregated table is held in memory. Expanded monthly rows
-    are written incrementally, avoiding a second full-cohort DataFrame copy.
+    The aggregated Parquet is never loaded into pandas. DuckDB performs cohort
+    statistics, calendar expansion, split allocation, diagnostics and Parquet
+    writing; only the compact cohort report is materialised in pandas.
     """
-    required = ["YEAR_MONTH"] + KEY + [
-        "VMP_PRODUCT_NAME", "UNIT_OF_MEASURE_NAME", "SOURCE_RECORDS",
-        "POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
-        "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS",
-        "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
-        "NEGATIVE_COST_RECORDS",
-    ]
     fractions = (float(train_frac), float(val_frac), float(test_frac))
-    if any(not np.isfinite(value) or value <= 0 or value >= 1 for value in fractions):
+    if any(not np.isfinite(v) or v <= 0 or v >= 1 for v in fractions):
         raise ValueError("train_frac, val_frac and test_frac must each be between zero and one")
     if not np.isclose(sum(fractions), 1.0, rtol=0.0, atol=1e-9):
         raise ValueError("train_frac + val_frac + test_frac must sum to 1.0")
-    agg = pd.read_parquet(aggregated_path, columns=required)
-    if agg.empty:
-        raise ValueError("Aggregated SCMD dataset is empty")
-    agg["YEAR_MONTH"] = agg["YEAR_MONTH"].astype(str).str.strip()
-    parsed = pd.to_datetime(agg["YEAR_MONTH"], format="%Y%m", errors="coerce")
-    if parsed.isna().any():
-        bad = agg.loc[parsed.isna(), "YEAR_MONTH"].unique()[:10]
-        raise ValueError(f"Invalid YEAR_MONTH values: {bad}")
-    agg["PERIOD"] = parsed
-    for col in KEY:
-        agg[col] = agg[col].astype("category")
-    numeric = [
-        "SOURCE_RECORDS", "POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
-        "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS", "INVALID_QUANTITY_RECORDS",
-        "MISSING_OR_INVALID_COST_RECORDS", "NEGATIVE_COST_RECORDS",
-    ]
-    agg["SOURCE_RECORDS"] = pd.to_numeric(agg["SOURCE_RECORDS"], errors="coerce")
-    if agg["SOURCE_RECORDS"].isna().any():
-        raise ValueError("Aggregated SCMD table contains null SOURCE_RECORDS")
-    for col in numeric[1:]:
-        # DuckDB SUM returns NULL when every source value in a group is invalid.
-        # Preserve the previous explicit zero-fill policy for those aggregate measures.
-        agg[col] = pd.to_numeric(agg[col], errors="coerce").fillna(0.0)
 
-    business_key = ["YEAR_MONTH"] + KEY
-    duplicate_count = int(agg.duplicated(business_key).sum())
-    if duplicate_count:
-        raise ValueError(f"Aggregated business key is not unique: {duplicate_count:,} duplicates")
+    aggregated_path, series_path = Path(aggregated_path), Path(series_path)
+    cohort_path, diagnostics_path = Path(cohort_path), Path(diagnostics_path)
+    for path in (series_path, cohort_path, diagnostics_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    temp_series = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
+    temp_series.unlink(missing_ok=True)
 
-    from pyarrow import Table
-    from pyarrow.parquet import ParquetWriter
-    series_path = Path(series_path)
-    series_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_series_path = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
-    temporary_series_path.unlink(missing_ok=True)
-    batch_frames = []
-    writer = None
-    cohort_rows = []
-    retained_missing_periods = 0
-    retained_series = 0
-    batch_size = 250
+    con = duckdb.connect(config={"enable_progress_bar": "true", "progress_bar_time": "1000ms"})
+    agg_file = str(aggregated_path.resolve()).replace("'", "''")
+    temp_file = str(temp_series.resolve()).replace("'", "''")
+    try:
+        con.execute(f"CREATE VIEW agg AS SELECT * FROM read_parquet('{agg_file}')")
+        columns = {row[0] for row in con.execute("DESCRIBE agg").fetchall()}
+        required = ["YEAR_MONTH"] + KEY + [
+            "VMP_PRODUCT_NAME", "UNIT_OF_MEASURE_NAME", "SOURCE_RECORDS",
+            "POSITIVE_QUANTITY", "NEGATIVE_QUANTITY", "NET_QUANTITY",
+            "TOTAL_INDICATIVE_COST", "VALID_QUANTITY_RECORDS",
+            "INVALID_QUANTITY_RECORDS", "MISSING_OR_INVALID_COST_RECORDS",
+            "NEGATIVE_COST_RECORDS",
+        ]
+        missing = sorted(set(required) - columns)
+        if missing:
+            raise ValueError(f"Aggregated SCMD data is missing columns: {missing}")
+        duplicate_count = int(con.execute("""
+            SELECT count(*) FROM (
+                SELECT YEAR_MONTH, ODS_CODE, VMP_SNOMED_CODE,
+                       UNIT_OF_MEASURE_IDENTIFIER
+                FROM agg GROUP BY ALL HAVING count(*) > 1
+            )
+        """).fetchone()[0])
+        if duplicate_count:
+            raise ValueError(f"Aggregated business key is not unique: {duplicate_count:,} duplicates")
 
-    from tqdm.auto import tqdm
-    grouped = agg.groupby(KEY, sort=False, dropna=False, observed=True)
-    progress = tqdm(grouped, total=grouped.ngroups,
-                    desc="Phase 1/2: building monthly medicine series",
-                    unit="series", dynamic_ncols=True, mininterval=1.0)
-    for key_values, group in progress:
-        group = group.sort_values("PERIOD").copy()
-        months = pd.date_range(group["PERIOD"].min(), group["PERIOD"].max(), freq="MS")
-        indexed = group.set_index("PERIOD").reindex(months)
-        indexed.index.name = "PERIOD"
-        for col, value in zip(KEY, key_values):
-            indexed[col] = str(value)
-        indexed["OBSERVATION_MISSING"] = indexed["SOURCE_RECORDS"].isna()
-        indexed["SOURCE_RECORDS"] = indexed["SOURCE_RECORDS"].fillna(0).astype("int64")
-        for col in numeric[1:]:
-            indexed[col] = indexed[col].fillna(0.0)
-        indexed["MODEL_DEMAND"] = indexed["POSITIVE_QUANTITY"].where(~indexed["OBSERVATION_MISSING"])
-        indexed["DEMAND_NET"] = indexed["NET_QUANTITY"]
-        indexed["VMP_PRODUCT_NAME"] = indexed["VMP_PRODUCT_NAME"].ffill().bfill()
-        indexed["UNIT_OF_MEASURE_NAME"] = indexed["UNIT_OF_MEASURE_NAME"].ffill().bfill()
-        indexed["YEAR_MONTH"] = indexed.index.strftime("%Y%m")
-        indexed = indexed.reset_index()
+        con.execute("""
+            CREATE TEMP TABLE clean AS
+            SELECT trim(CAST(YEAR_MONTH AS VARCHAR)) AS YEAR_MONTH,
+                   strptime(trim(CAST(YEAR_MONTH AS VARCHAR)), '%Y%m')::DATE AS PERIOD,
+                   CAST(ODS_CODE AS VARCHAR) AS ODS_CODE,
+                   CAST(VMP_SNOMED_CODE AS VARCHAR) AS VMP_SNOMED_CODE,
+                   CAST(UNIT_OF_MEASURE_IDENTIFIER AS VARCHAR) AS UNIT_OF_MEASURE_IDENTIFIER,
+                   VMP_PRODUCT_NAME, UNIT_OF_MEASURE_NAME,
+                   CAST(SOURCE_RECORDS AS BIGINT) AS SOURCE_RECORDS,
+                   coalesce(CAST(POSITIVE_QUANTITY AS DOUBLE), 0) AS POSITIVE_QUANTITY,
+                   coalesce(CAST(NEGATIVE_QUANTITY AS DOUBLE), 0) AS NEGATIVE_QUANTITY,
+                   coalesce(CAST(NET_QUANTITY AS DOUBLE), 0) AS NET_QUANTITY,
+                   coalesce(CAST(TOTAL_INDICATIVE_COST AS DOUBLE), 0) AS TOTAL_INDICATIVE_COST,
+                   coalesce(CAST(VALID_QUANTITY_RECORDS AS BIGINT), 0) AS VALID_QUANTITY_RECORDS,
+                   coalesce(CAST(INVALID_QUANTITY_RECORDS AS BIGINT), 0) AS INVALID_QUANTITY_RECORDS,
+                   coalesce(CAST(MISSING_OR_INVALID_COST_RECORDS AS BIGINT), 0) AS MISSING_OR_INVALID_COST_RECORDS,
+                   coalesce(CAST(NEGATIVE_COST_RECORDS AS BIGINT), 0) AS NEGATIVE_COST_RECORDS
+            FROM agg
+        """)
+        invalid_dates = int(con.execute("SELECT count(*) FROM clean WHERE PERIOD IS NULL").fetchone()[0])
+        if invalid_dates:
+            raise ValueError(f"Aggregated SCMD table contains {invalid_dates:,} invalid YEAR_MONTH values")
+        null_source = int(con.execute("SELECT count(*) FROM clean WHERE SOURCE_RECORDS IS NULL").fetchone()[0])
+        if null_source:
+            raise ValueError("Aggregated SCMD table contains null SOURCE_RECORDS")
 
-        observed = indexed.loc[~indexed["OBSERVATION_MISSING"]]
-        values = observed["MODEL_DEMAND"].to_numpy(dtype=float)
-        n_periods = len(indexed)
-        n_observed = len(observed)
-        n_nonzero = int((values > 0).sum())
-        missing_periods = int(indexed["OBSERVATION_MISSING"].sum())
-        reason = []
-        if n_periods < int(min_periods):
-            reason.append("insufficient_periods")
-        if n_nonzero < int(min_nonzero):
-            reason.append("insufficient_nonzero")
-        included = not reason
+        con.execute(f"""
+            CREATE TEMP TABLE cohort_stats AS
+            WITH stats AS (
+                SELECT ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER,
+                       min(PERIOD) AS FIRST_PERIOD, max(PERIOD) AS LAST_PERIOD,
+                       date_diff('month', min(PERIOD), max(PERIOD)) + 1 AS N_PERIODS,
+                       count(*) AS N_OBSERVED,
+                       sum(CASE WHEN POSITIVE_QUANTITY > 0 THEN 1 ELSE 0 END)::BIGINT AS N_NONZERO,
+                       sum(CASE WHEN POSITIVE_QUANTITY = 0 THEN 1 ELSE 0 END)::BIGINT AS N_ZERO,
+                       quantile_cont(POSITIVE_QUANTITY, .25) AS Q1,
+                       quantile_cont(POSITIVE_QUANTITY, .75) AS Q3,
+                       avg(POSITIVE_QUANTITY) FILTER (WHERE POSITIVE_QUANTITY > 0) AS POS_MEAN,
+                       stddev_samp(POSITIVE_QUANTITY) FILTER (WHERE POSITIVE_QUANTITY > 0) AS POS_STD,
+                       count(*) FILTER (WHERE POSITIVE_QUANTITY > 0) AS POS_COUNT
+                FROM clean GROUP BY ALL
+            ), split_raw AS (
+                SELECT *, N_PERIODS * {fractions[0]:.17g} AS RAW_TRAIN,
+                          N_PERIODS * {fractions[1]:.17g} AS RAW_VAL,
+                          N_PERIODS * {fractions[2]:.17g} AS RAW_TEST
+                FROM stats
+            ), split_floor AS (
+                SELECT *, floor(RAW_TRAIN)::BIGINT AS BASE_TRAIN,
+                          floor(RAW_VAL)::BIGINT AS BASE_VAL,
+                          floor(RAW_TEST)::BIGINT AS BASE_TEST,
+                          N_PERIODS - floor(RAW_TRAIN) - floor(RAW_VAL) - floor(RAW_TEST) AS REMAINDER
+                FROM split_raw
+            ), split_rank AS (
+                SELECT *, row_number() OVER (
+                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
+                    ORDER BY (RAW_TRAIN-BASE_TRAIN) DESC, 1
+                ) AS RANK_TRAIN,
+                row_number() OVER (
+                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
+                    ORDER BY (RAW_VAL-BASE_VAL) DESC, 2
+                ) AS RANK_VAL,
+                row_number() OVER (
+                    PARTITION BY ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER
+                    ORDER BY (RAW_TEST-BASE_TEST) DESC, 3
+                ) AS RANK_TEST
+                FROM split_floor
+            )
+            SELECT *,
+                BASE_TRAIN + CASE WHEN RANK_TRAIN <= REMAINDER THEN 1 ELSE 0 END AS N_TRAIN,
+                BASE_VAL + CASE WHEN RANK_VAL <= REMAINDER THEN 1 ELSE 0 END AS N_VAL,
+                BASE_TEST + CASE WHEN RANK_TEST <= REMAINDER THEN 1 ELSE 0 END AS N_TEST,
+                CASE WHEN N_PERIODS < {int(min_periods)} THEN 'insufficient_periods'
+                     WHEN N_NONZERO < {int(min_nonzero)} THEN 'insufficient_nonzero'
+                     WHEN least(
+                         BASE_TRAIN + CASE WHEN RANK_TRAIN <= REMAINDER THEN 1 ELSE 0 END,
+                         BASE_VAL + CASE WHEN RANK_VAL <= REMAINDER THEN 1 ELSE 0 END,
+                         BASE_TEST + CASE WHEN RANK_TEST <= REMAINDER THEN 1 ELSE 0 END
+                     ) < 1 THEN 'insufficient_rows_for_three_way_split'
+                     ELSE '' END AS EXCLUSION_REASON,
+                CASE WHEN N_PERIODS > 0 AND N_NONZERO > 0
+                     THEN N_PERIODS::DOUBLE / N_NONZERO ELSE 'Infinity'::DOUBLE END AS ADI,
+                CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0
+                     THEN pow(POS_STD / POS_MEAN, 2) ELSE 0 END AS CV2,
+                CASE WHEN POS_COUNT = 0 THEN 'Smooth'
+                     WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 AND
+                          CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Smooth'
+                     WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 THEN 'Erratic'
+                     WHEN CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Intermittent'
+                     ELSE 'Lumpy' END AS DEMAND_CLASS
+            FROM split_rank
+        """)
 
-        adi, cv2 = compute_adi_cv2(values)
-        q1 = observed["MODEL_DEMAND"].quantile(.25) if n_observed else np.nan
-        q3 = observed["MODEL_DEMAND"].quantile(.75) if n_observed else np.nan
-        upper_fence = q3 + 3.0 * (q3 - q1) if n_observed else np.nan
-        indexed["EXTREME_FLAG"] = indexed["MODEL_DEMAND"] > upper_fence
-        indexed["DEMAND"] = indexed["MODEL_DEMAND"].where(~indexed["OBSERVATION_MISSING"])
-        indexed["DEMAND_CLEAN"] = indexed["DEMAND"]
+        # Exact monthly calendar expansion and carry-forward labels are executed
+        # in DuckDB. Missing months remain missing observations, never zero demand.
+        con.execute(f"""
+            CREATE TEMP TABLE monthly AS
+            WITH calendar AS (
+                SELECT s.ODS_CODE, s.VMP_SNOMED_CODE, s.UNIT_OF_MEASURE_IDENTIFIER,
+                       gs.month_date::DATE AS PERIOD
+                FROM cohort_stats s,
+                LATERAL generate_series(s.FIRST_PERIOD, s.LAST_PERIOD, INTERVAL 1 MONTH) gs(month_date)
+                WHERE s.EXCLUSION_REASON = ''
+            ), joined AS (
+                SELECT c.*, a.YEAR_MONTH, a.VMP_PRODUCT_NAME, a.UNIT_OF_MEASURE_NAME,
+                       a.SOURCE_RECORDS, a.POSITIVE_QUANTITY, a.NEGATIVE_QUANTITY,
+                       a.NET_QUANTITY, a.TOTAL_INDICATIVE_COST, a.VALID_QUANTITY_RECORDS,
+                       a.INVALID_QUANTITY_RECORDS, a.MISSING_OR_INVALID_COST_RECORDS,
+                       a.NEGATIVE_COST_RECORDS
+                FROM calendar c LEFT JOIN clean a USING
+                    (ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER, PERIOD)
+            ), labelled AS (
+                SELECT *,
+                    SOURCE_RECORDS IS NULL AS OBSERVATION_MISSING,
+                    coalesce(SOURCE_RECORDS, 0)::BIGINT AS SOURCE_RECORDS_FILLED,
+                    coalesce(POSITIVE_QUANTITY, 0) AS POSITIVE_FILLED,
+                    coalesce(NEGATIVE_QUANTITY, 0) AS NEGATIVE_FILLED,
+                    coalesce(NET_QUANTITY, 0) AS NET_FILLED,
+                    coalesce(TOTAL_INDICATIVE_COST, 0) AS COST_FILLED,
+                    coalesce(VALID_QUANTITY_RECORDS, 0) AS VALID_FILLED,
+                    coalesce(INVALID_QUANTITY_RECORDS, 0) AS INVALID_FILLED,
+                    coalesce(MISSING_OR_INVALID_COST_RECORDS, 0) AS MISSING_COST_FILLED,
+                    coalesce(NEGATIVE_COST_RECORDS, 0) AS NEGATIVE_COST_FILLED,
+                    last_value(VMP_PRODUCT_NAME IGNORE NULLS) OVER w AS PRODUCT_FF,
+                    last_value(UNIT_OF_MEASURE_NAME IGNORE NULLS) OVER w AS UNIT_FF,
+                    first_value(VMP_PRODUCT_NAME IGNORE NULLS) OVER w AS PRODUCT_BF,
+                    first_value(UNIT_OF_MEASURE_NAME IGNORE NULLS) OVER w AS UNIT_BF,
+                    row_number() OVER w AS PERIOD_INDEX
+                FROM joined
+                WINDOW w AS (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER ORDER BY PERIOD
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            ), bounds AS (
+                SELECT *, coalesce(PRODUCT_FF, PRODUCT_BF) AS PRODUCT_NAME_FILLED,
+                          coalesce(UNIT_FF, UNIT_BF) AS UNIT_NAME_FILLED
+                FROM labelled
+            ), demand AS (
+                SELECT *, CASE WHEN OBSERVATION_MISSING THEN NULL ELSE POSITIVE_FILLED END AS MODEL_DEMAND,
+                          CASE WHEN OBSERVATION_MISSING THEN NULL ELSE NET_FILLED END AS DEMAND_NET,
+                          CASE WHEN OBSERVATION_MISSING THEN NULL ELSE POSITIVE_FILLED END AS DEMAND
+                FROM bounds
+            ), fenced AS (
+                SELECT *, quantile_cont(MODEL_DEMAND, .25) FILTER (WHERE NOT OBSERVATION_MISSING)
+                            OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER) AS DQ1,
+                          quantile_cont(MODEL_DEMAND, .75) FILTER (WHERE NOT OBSERVATION_MISSING)
+                            OVER (PARTITION BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER) AS DQ3
+                FROM demand
+            ), split AS (
+                SELECT m.*, s.N_PERIODS, s.N_OBSERVED, s.N_NONZERO, s.ADI, s.CV2, s.DEMAND_CLASS,
+                       s.N_TRAIN, s.N_VAL, s.N_TEST,
+                       (s.Q3 + 3.0*(s.Q3-s.Q1)) AS COHORT_UPPER_FENCE,
+                       row_number() OVER (PARTITION BY m.ODS_CODE,m.VMP_SNOMED_CODE,m.UNIT_OF_MEASURE_IDENTIFIER ORDER BY m.PERIOD) AS SPLIT_INDEX
+                FROM fenced m JOIN cohort_stats s USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
+            )
+            SELECT YEAR_MONTH, ODS_CODE, VMP_SNOMED_CODE, UNIT_OF_MEASURE_IDENTIFIER,
+                   coalesce(PRODUCT_NAME_FILLED, '') AS VMP_PRODUCT_NAME,
+                   coalesce(UNIT_NAME_FILLED, '') AS UNIT_OF_MEASURE_NAME,
+                   PERIOD, SOURCE_RECORDS_FILLED AS SOURCE_RECORDS,
+                   POSITIVE_FILLED AS POSITIVE_QUANTITY, NEGATIVE_FILLED AS NEGATIVE_QUANTITY,
+                   NET_FILLED AS NET_QUANTITY, COST_FILLED AS TOTAL_INDICATIVE_COST,
+                   VALID_FILLED AS VALID_QUANTITY_RECORDS, INVALID_FILLED AS INVALID_QUANTITY_RECORDS,
+                   MISSING_COST_FILLED AS MISSING_OR_INVALID_COST_RECORDS,
+                   NEGATIVE_COST_FILLED AS NEGATIVE_COST_RECORDS,
+                   OBSERVATION_MISSING,
+                   MODEL_DEMAND, DEMAND_NET, DEMAND,
+                   DEMAND AS DEMAND_CLEAN,
+                   (MODEL_DEMAND > COHORT_UPPER_FENCE) AS EXTREME_FLAG,
+                   CASE WHEN SPLIT_INDEX <= N_TRAIN THEN 'train'
+                        WHEN SPLIT_INDEX <= N_TRAIN + N_VAL THEN 'validation'
+                        ELSE 'test' END AS SPLIT,
+                   (PERIOD + (N_TRAIN-1) * INTERVAL 1 MONTH)::DATE AS TRAIN_END,
+                   (PERIOD + (N_TRAIN+N_VAL-1) * INTERVAL 1 MONTH)::DATE AS VALIDATION_END,
+                   (PERIOD + (N_TRAIN+N_VAL) * INTERVAL 1 MONTH)::DATE AS TEST_START,
+                   'OBSERVED_DEMAND' AS DATA_TYPE,
+                   '{OBSERVED_DEMAND_DISCLAIMER}' AS DISCLAIMER
+            FROM split
+        """)
 
-        periods = indexed["PERIOD"].drop_duplicates().sort_values().tolist()
-        n_train, n_val, n_test = _allocate_split_counts(n_periods, fractions)
-        if min(n_train, n_val, n_test) < 1 or n_train + n_val + n_test != n_periods:
-            included = False
-            reason.append("insufficient_rows_for_three_way_split")
-        train_end = periods[n_train - 1] if n_train else pd.NaT
-        validation_end = periods[n_train + n_val - 1] if n_train + n_val else pd.NaT
-        test_start = periods[n_train + n_val] if n_train + n_val < n_periods else pd.NaT
-        indexed["TRAIN_END"] = train_end
-        indexed["VALIDATION_END"] = validation_end
-        indexed["TEST_START"] = test_start
-        indexed["SPLIT"] = np.select(
-            [indexed["PERIOD"] <= train_end, indexed["PERIOD"] <= validation_end],
-            ["train", "validation"], default="test"
+        con.execute(f"COPY (SELECT * FROM monthly ORDER BY ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER,PERIOD) TO '{temp_file}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+        temp_series.replace(series_path)
+
+        cohort = con.execute("""
+            SELECT s.ODS_CODE, s.VMP_SNOMED_CODE, s.UNIT_OF_MEASURE_IDENTIFIER,
+                   s.N_PERIODS, s.N_OBSERVED,
+                   s.N_PERIODS-s.N_OBSERVED AS N_MISSING_PERIODS,
+                   s.N_NONZERO, (s.EXCLUSION_REASON = '') AS COHORT_INCLUDED,
+                   s.EXCLUSION_REASON, s.ADI, s.CV2, s.DEMAND_CLASS,
+                   CASE WHEN s.N_OBSERVED > 0 THEN s.N_ZERO::DOUBLE/s.N_OBSERVED*100 ELSE NULL END AS ZERO_PCT,
+                   coalesce(x.EXTREME_COUNT,0) AS EXTREME_COUNT,
+                   'OBSERVED_DEMAND' AS DATA_TYPE, ? AS DISCLAIMER
+            FROM cohort_stats s LEFT JOIN (
+                SELECT ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER,
+                       count(*) FILTER (WHERE MODEL_DEMAND > COHORT_UPPER_FENCE) AS EXTREME_COUNT
+                FROM monthly GROUP BY ALL
+            ) x USING (ODS_CODE,VMP_SNOMED_CODE,UNIT_OF_MEASURE_IDENTIFIER)
+        """, [OBSERVED_DEMAND_DISCLAIMER]).df()
+
+        monthly_summary = con.execute("""
+            SELECT YEAR_MONTH,
+                   sum(SOURCE_RECORDS)::BIGINT AS SOURCE_RECORDS,
+                   sum(POSITIVE_QUANTITY) AS POSITIVE_QUANTITY,
+                   sum(NEGATIVE_QUANTITY) AS NEGATIVE_QUANTITY,
+                   sum(NET_QUANTITY) AS NET_QUANTITY,
+                   sum(TOTAL_INDICATIVE_COST) AS TOTAL_INDICATIVE_COST,
+                   sum(INVALID_QUANTITY_RECORDS)::BIGINT AS INVALID_QUANTITY_RECORDS,
+                   sum(MISSING_OR_INVALID_COST_RECORDS)::BIGINT AS MISSING_OR_INVALID_COST_RECORDS,
+                   sum(NEGATIVE_COST_RECORDS)::BIGINT AS NEGATIVE_COST_RECORDS
+            FROM clean GROUP BY YEAR_MONTH ORDER BY YEAR_MONTH
+        """).df()
+        if cohort.empty:
+            raise ValueError("Aggregated SCMD dataset is empty")
+        if int(cohort.COHORT_INCLUDED.sum()) == 0:
+            raise ValueError(
+                "No SCMD series met cohort and chronological split requirements; "
+                "review min_periods, min_nonzero and split fractions."
+            )
+
+        monthly_summary["COST_ANOMALY_FLAG"] = (
+            monthly_summary["TOTAL_INDICATIVE_COST"] > monthly_summary["TOTAL_INDICATIVE_COST"].median() * 2.0
         )
-        indexed["DATA_TYPE"] = "OBSERVED_DEMAND"
-        indexed["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+        monthly_summary["DATA_TYPE"] = "OBSERVED_DEMAND"
+        monthly_summary["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
+        cohort.to_csv(cohort_path, index=False)
+        monthly_summary.to_csv(cohort_path.parent / "monthly_data_summary.csv", index=False)
 
-        cohort_rows.append(dict(
-            zip(KEY, map(str, key_values)),
-            N_PERIODS=n_periods, N_OBSERVED=n_observed,
-            N_MISSING_PERIODS=missing_periods, N_NONZERO=n_nonzero,
-            COHORT_INCLUDED=included, EXCLUSION_REASON=";".join(reason),
-            ADI=adi, CV2=cv2, DEMAND_CLASS=classify_demand(adi, cv2),
-            ZERO_PCT=float((values == 0).mean() * 100) if n_observed else None,
-            EXTREME_COUNT=int(indexed["EXTREME_FLAG"].sum()),
-        ))
-
-        if not included:
-            progress.set_postfix(retained=retained_series, excluded=len(cohort_rows), refresh=False)
-            continue
-        retained_series += 1
-        progress.set_postfix(retained=retained_series,
-                             excluded=len(cohort_rows) - retained_series, refresh=False)
-        retained_missing_periods += missing_periods
-        batch_frames.append(indexed)
-        if len(batch_frames) >= batch_size:
-            batch = pd.concat(batch_frames, ignore_index=True)
-            table = Table.from_pandas(batch, preserve_index=False)
-            if writer is None:
-                writer = ParquetWriter(temporary_series_path, table.schema, compression="zstd")
-            writer.write_table(table)
-            batch_frames.clear()
-
-    if batch_frames:
-        batch = pd.concat(batch_frames, ignore_index=True)
-        table = Table.from_pandas(batch, preserve_index=False)
-        if writer is None:
-            writer = ParquetWriter(temporary_series_path, table.schema, compression="zstd")
-        writer.write_table(table)
-    if writer is not None:
-        writer.close()
-        temporary_series_path.replace(series_path)
-    else:
-        temporary_series_path.unlink(missing_ok=True)
-        raise ValueError(
-            "No SCMD series met cohort and chronological split requirements; "
-            "review min_periods, min_nonzero and split fractions."
-        )
-
-    cohort = pd.DataFrame(cohort_rows)
-    cohort["DATA_TYPE"] = "OBSERVED_DEMAND"
-    cohort["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
-    monthly_summary = agg.groupby("YEAR_MONTH", as_index=False, observed=True).agg(
-        SOURCE_RECORDS=("SOURCE_RECORDS", "sum"),
-        POSITIVE_QUANTITY=("POSITIVE_QUANTITY", "sum"),
-        NEGATIVE_QUANTITY=("NEGATIVE_QUANTITY", "sum"),
-        NET_QUANTITY=("NET_QUANTITY", "sum"),
-        TOTAL_INDICATIVE_COST=("TOTAL_INDICATIVE_COST", "sum"),
-        INVALID_QUANTITY_RECORDS=("INVALID_QUANTITY_RECORDS", "sum"),
-        MISSING_OR_INVALID_COST_RECORDS=("MISSING_OR_INVALID_COST_RECORDS", "sum"),
-        NEGATIVE_COST_RECORDS=("NEGATIVE_COST_RECORDS", "sum"),
-    )
-    monthly_summary["COST_ANOMALY_FLAG"] = (
-        monthly_summary["TOTAL_INDICATIVE_COST"] >
-        monthly_summary["TOTAL_INDICATIVE_COST"].median() * 2.0
-    )
-    monthly_summary["DATA_TYPE"] = "OBSERVED_DEMAND"
-    monthly_summary["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
-    Path(cohort_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(diagnostics_path).parent.mkdir(parents=True, exist_ok=True)
-    cohort_export = cohort.copy()
-    monthly_export = monthly_summary.copy()
-    for export in (cohort_export, monthly_export):
-        export["DATA_TYPE"] = "OBSERVED_DEMAND"
-        export["DISCLAIMER"] = OBSERVED_DEMAND_DISCLAIMER
-    cohort_export.to_csv(cohort_path, index=False)
-    monthly_export.to_csv(Path(cohort_path).parent / "monthly_data_summary.csv", index=False)
-
-    report = {
-        "source": "NHSBSA Secondary Care Medicines Indicative Price",
-        "granularity": "monthly",
-        "date_range": {
-            "start": str(pd.to_datetime(agg["PERIOD"]).min().date()),
-            "end": str(pd.to_datetime(agg["PERIOD"]).max().date()),
-        },
-        "aggregated_rows": int(len(agg)),
-        "global_duplicate_business_keys": duplicate_count,
-        "monthly_cost_anomaly_months": monthly_summary.loc[
-            monthly_summary["COST_ANOMALY_FLAG"], "YEAR_MONTH"
-        ].tolist(),
-        "series_count_before_filter": int(len(cohort)),
-        "series_retained": int(retained_series),
-        "series_excluded": int((~cohort["COHORT_INCLUDED"]).sum()),
-        "missing_month_observations_in_retained_cohort": int(retained_missing_periods),
-        "negative_quantity_total": float(agg["NEGATIVE_QUANTITY"].sum()),
-        "positive_quantity_total": float(agg["POSITIVE_QUANTITY"].sum()),
-        "invalid_quantity_records": int(agg["INVALID_QUANTITY_RECORDS"].sum()),
-        "missing_or_invalid_cost_records": int(agg["MISSING_OR_INVALID_COST_RECORDS"].sum()),
-        "negative_cost_records": int(agg["NEGATIVE_COST_RECORDS"].sum()),
-        "demand_class_distribution": cohort.loc[
-            cohort["COHORT_INCLUDED"], "DEMAND_CLASS"
-        ].value_counts().to_dict(),
-        "memory_strategy": (
-            "Read only required aggregate columns, encode business keys categorically, "
-            "expand and persist retained monthly series in bounded batches; do not reload "
-            "the complete expanded cohort into pandas."
-        ),
-        "DATA_TYPE": "OBSERVED_DEMAND",
-        "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
-        "note": (
-            "Missing month rows are flagged, not silently interpreted as observed zero demand. "
-            "MODEL_DEMAND is NaN for unobserved months; net and negative movements remain "
-            "available separately. The final persisted Parquet contains the retained cohort "
-            "and chronological SPLIT assignments."
-        ),
-    }
-    with open(diagnostics_path, "w", encoding="utf-8") as stream:
-        json.dump(report, stream, indent=2, default=str)
-    return (pd.read_parquet(series_path) if load_series else None), cohort, report
+        totals = con.execute("""
+            SELECT min(PERIOD), max(PERIOD), count(*),
+                   sum(NEGATIVE_QUANTITY), sum(POSITIVE_QUANTITY),
+                   sum(INVALID_QUANTITY_RECORDS), sum(MISSING_OR_INVALID_COST_RECORDS),
+                   sum(NEGATIVE_COST_RECORDS)
+            FROM clean
+        """).fetchone()
+        retained = int(cohort.COHORT_INCLUDED.sum())
+        report = {
+            "source": "NHSBSA Secondary Care Medicines Indicative Price",
+            "granularity": "monthly",
+            "date_range": {"start": str(totals[0]), "end": str(totals[1])},
+            "aggregated_rows": int(totals[2]),
+            "global_duplicate_business_keys": duplicate_count,
+            "monthly_cost_anomaly_months": monthly_summary.loc[monthly_summary.COST_ANOMALY_FLAG, "YEAR_MONTH"].tolist(),
+            "series_count_before_filter": int(len(cohort)),
+            "series_retained": retained,
+            "series_excluded": int(len(cohort)-retained),
+            "missing_month_observations_in_retained_cohort": int(cohort.loc[cohort.COHORT_INCLUDED,"N_MISSING_PERIODS"].sum()),
+            "negative_quantity_total": float(totals[3] or 0),
+            "positive_quantity_total": float(totals[4] or 0),
+            "invalid_quantity_records": int(totals[5] or 0),
+            "missing_or_invalid_cost_records": int(totals[6] or 0),
+            "negative_cost_records": int(totals[7] or 0),
+            "demand_class_distribution": cohort.loc[cohort.COHORT_INCLUDED,"DEMAND_CLASS"].value_counts().to_dict(),
+            "memory_strategy": "DuckDB SQL performs cohort statistics, monthly calendar expansion, chronological split assignment and direct Parquet writing; pandas materialises only the compact cohort and monthly summary reports.",
+            "DATA_TYPE": "OBSERVED_DEMAND",
+            "disclaimer": OBSERVED_DEMAND_DISCLAIMER,
+            "note": "Missing month rows are flagged, not interpreted as observed zero demand. MODEL_DEMAND is NULL for unobserved months; negative and net movements remain separately available."
+        }
+        with open(diagnostics_path,"w",encoding="utf-8") as stream:
+            json.dump(report,stream,indent=2,default=str)
+        returned = con.execute(f"SELECT * FROM read_parquet('{str(series_path.resolve()).replace(chr(39), chr(39)*2)}')").df() if load_series else None
+        return returned, cohort, report
+    finally:
+        con.close()
 
 def run_phase1_from_csv(source=None, output_root="output", processed_root="data/processed",
                         min_periods=18, min_nonzero=6, train_frac=.60, val_frac=.20,
