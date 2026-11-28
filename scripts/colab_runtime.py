@@ -12,6 +12,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -209,8 +210,11 @@ def run_stage(
         stages.pop(downstream_stage, None)
     _write_manifest(manifest)
 
-    print(f"[STAGE START] {stage}")
+    started_at = time.monotonic()
+    print(f"[STAGE START] {stage} | elapsed=00:00:00", flush=True)
     result = action()
+    elapsed = time.monotonic() - started_at
+    print(f"[STAGE WORK COMPLETE] {stage} | elapsed={int(elapsed // 60):02d}:{int(elapsed % 60):02d}", flush=True)
     missing = [item for item in artifacts
                if not (ROOT / item).is_file() or (ROOT / item).stat().st_size == 0]
     if missing:
@@ -225,8 +229,8 @@ def run_stage(
         "git_revision": _git_revision(),
     }
     _write_manifest(manifest)
-    print(f"[STAGE COMPLETE] {stage}")
-    return {"stage": stage, "status": "COMPLETED", "result": result}
+    print(f"[STAGE COMPLETE] {stage} | elapsed={int(elapsed // 60):02d}:{int(elapsed % 60):02d}", flush=True)
+    return {"stage": stage, "status": "COMPLETED", "elapsed_seconds": round(elapsed, 2), "result": result}
 
 
 def ingestion_fingerprint(
