@@ -147,17 +147,25 @@ def test_notebook_defaults_to_fresh_artifacts_and_makes_restore_opt_in():
 
 
 
-def test_notebook_uses_canonical_model_modules_without_duplicate_implementations():
+def test_notebook_contains_and_installs_forecasting_implementation():
     notebook = load_notebook()
-    notebook_source = "\\n".join(source for _, source in code_cells(notebook))
-    markdown_source = "\\n".join(
+    notebook_source = "\n".join(source for _, source in code_cells(notebook))
+    markdown_source = "\n".join(
         "".join(cell.get("source", []))
         for cell in notebook["cells"]
         if cell.get("cell_type") == "markdown"
     )
-    assert "def create_features(data):" not in notebook_source
-    assert "def train_and_predict(" not in notebook_source
-    assert "_pipeline_module.train_and_predict" not in notebook_source
-    assert "src/set_forecasting/forecasting/model.py" in markdown_source
-    assert "src/set_forecasting/features/engineering.py" in markdown_source
-    assert "not called by the active monthly SCMD pipeline" in markdown_source
+    assert "def create_features(data):" in notebook_source
+    assert "def train_and_predict(" in notebook_source
+    assert 'objective="quantile"' in notebook_source
+    assert "for quantile in (.1,.5,.9):" in notebook_source
+    assert "PreviousObservationNaive" in notebook_source
+    assert "SeasonalNaive12" in notebook_source
+    assert "pipeline_module.train_and_predict = train_and_predict" in notebook_source
+    assert "Notebook-owned forecasting implementation" in markdown_source
+    assert "RADCSR formulas and coefficients" in markdown_source
+    assert "Inventory outcomes and stockout labels remain simulated" in markdown_source
+
+def test_model_fingerprint_includes_notebook_forecasting_source():
+    helper = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
+    assert 'model_code.append("notebooks/SET_Pharma_Colab_Pipeline.ipynb")' in helper
