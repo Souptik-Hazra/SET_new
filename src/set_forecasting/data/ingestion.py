@@ -257,7 +257,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         # Exact monthly calendar expansion and carry-forward labels are executed
         # in DuckDB. Missing months remain missing observations, never zero demand.
         con.execute(f"""
-            CREATE TEMP TABLE monthly AS
+            CREATE TEMP VIEW monthly AS
             WITH calendar AS (
                 SELECT s.ODS_CODE, s.VMP_SNOMED_CODE, s.UNIT_OF_MEASURE_IDENTIFIER,
                        gs.month_date::DATE AS PERIOD
