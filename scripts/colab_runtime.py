@@ -67,12 +67,12 @@ MATH_ARTIFACTS = (
 
 
 def assert_supported_python() -> dict:
-    """Require the repository's configured Python 3.13.18 runtime."""
-    actual = (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
-    if actual != (3, 13, 18):
+    """Require Python 3.13, accepting any patch release."""
+    actual = (sys.version_info.major, sys.version_info.minor)
+    if actual != (3, 13):
         raise RuntimeError(
             f"Unsupported Python {sys.version.split()[0]}. "
-            "This project requires Python 3.13.18."
+            "This project requires Python 3.13.x."
         )
     return {"python_version": sys.version.split()[0], "python_supported": True,
             "python_override": False}
