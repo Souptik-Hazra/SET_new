@@ -174,7 +174,7 @@ def test_model_fingerprint_includes_notebook_forecasting_source():
 def test_ingestion_exposes_duckdb_and_cohort_progress():
     ingestion = (ROOT / "src" / "set_forecasting" / "data" / "ingestion.py").read_text(encoding="utf-8")
     runtime = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
-    assert '"enable_progress_bar": "true"' in ingestion
+    assert "SET enable_progress_bar = true" in ingestion
     assert 'SET progress_bar_time = \'1s\'' in ingestion
     assert "CREATE TEMP TABLE cohort_stats AS" in ingestion
     assert "generate_series" in ingestion
