@@ -49,10 +49,9 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Native DuckDB progress reports CSV scan/aggregation progress and ETA.
-    con = duckdb.connect(config={
-        "enable_progress_bar": "true",
-        "progress_bar_time": 1000,
-    })
+    con = duckdb.connect()
+    con.execute("SET enable_progress_bar = true")
+    con.execute("SET progress_bar_time = '1s'")
     escaped = str(source).replace("'", "''")
     query = f"""
       SELECT
@@ -106,7 +105,9 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     temp_series = series_path.with_name(series_path.stem + ".tmp" + series_path.suffix)
     temp_series.unlink(missing_ok=True)
 
-    con = duckdb.connect(config={"enable_progress_bar": "true", "progress_bar_time": 1000})
+    con = duckdb.connect()
+    con.execute("SET enable_progress_bar = true")
+    con.execute("SET progress_bar_time = '1s'")
     agg_file = str(aggregated_path.resolve()).replace("'", "''")
     temp_file = str(temp_series.resolve()).replace("'", "''")
     try:
@@ -212,7 +213,7 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
                      THEN pow(POS_STD / POS_MEAN, 2) ELSE 0 END AS CV2,
                 CASE WHEN (N_OBSERVED::DOUBLE / N_NONZERO) < 1.32 AND
                           CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Smooth'
-                     WHEN (N_PERIODS::DOUBLE / N_NONZERO) < 1.32 THEN 'Erratic'
+                     WHEN (N_OBSERVED::DOUBLE / N_NONZERO) < 1.32 THEN 'Erratic'
                      WHEN CASE WHEN POS_COUNT > 1 AND POS_MEAN <> 0 THEN pow(POS_STD/POS_MEAN,2) ELSE 0 END < .49 THEN 'Intermittent'
                      ELSE 'Lumpy' END AS DEMAND_CLASS
             FROM split_rank
