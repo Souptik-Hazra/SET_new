@@ -175,9 +175,10 @@ def test_ingestion_exposes_duckdb_and_cohort_progress():
     ingestion = (ROOT / "src" / "set_forecasting" / "data" / "ingestion.py").read_text(encoding="utf-8")
     runtime = (ROOT / "scripts" / "colab_runtime.py").read_text(encoding="utf-8")
     assert '"enable_progress_bar": "true"' in ingestion
-    assert '"progress_bar_time": "1000ms"' in ingestion
-    assert "tqdm.auto" in ingestion
-    assert "total=grouped.ngroups" in ingestion
-    assert "retained=retained_series" in ingestion
+    assert '"progress_bar_time": 1000' in ingestion
+    assert "CREATE TEMP TABLE cohort_stats AS" in ingestion
+    assert "generate_series" in ingestion
+    assert "COPY (SELECT * FROM monthly" in ingestion
+    assert "DuckDB SQL performs" in ingestion
     assert "[STAGE WORK COMPLETE]" in runtime
     assert "elapsed_seconds" in runtime
