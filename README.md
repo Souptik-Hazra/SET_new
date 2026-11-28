@@ -113,7 +113,7 @@ The disabled historical runner can be explicitly identified with `legacy-full-co
 
 ### Colab
 
-The resumable notebook is `notebooks/SET_Pharma_Colab_Pipeline.ipynb`. See [Colab execution instructions](docs/COLAB_EXECUTION.md) for Drive setup, checkpoints and recovery. The notebook calls the Python package rather than duplicating research logic. It generates figures from saved pipeline artifacts, displays them inline and persists them under `output/figures/` and Google Drive. Missing inputs are reported rather than replaced with illustrative values.
+The resumable notebook is `notebooks/SET_Pharma_Colab_Pipeline.ipynb`. See [Colab execution instructions](docs/COLAB_EXECUTION.md) for Drive setup, checkpoints and recovery. The notebook contains the active Colab feature-engineering and forecasting implementation (quantile LightGBM Q10/Q50/Q90 plus naive baselines); it delegates ingestion, reliability, RADCSR, simulation, calibration and validation to the Python package. The CLI continues to use the canonical Python forecasting modules. It generates figures from saved pipeline artifacts, displays them inline and persists them under `output/figures/` and Google Drive. Missing inputs are reported rather than replaced with illustrative values.
 
 ### Evaluation and sensitivity outputs
 
