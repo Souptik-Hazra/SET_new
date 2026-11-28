@@ -48,7 +48,11 @@ def aggregate_scmd(path, output_path, chunksize=200_000):
     validate_scmd_header(source)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect()
+    # Native DuckDB progress reports CSV scan/aggregation progress and ETA.
+    con = duckdb.connect(config={
+        "enable_progress_bar": "true",
+        "progress_bar_time": "1000ms",
+    })
     escaped = str(source).replace("'", "''")
     query = f"""
       SELECT
@@ -142,7 +146,12 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
     retained_series = 0
     batch_size = 250
 
-    for key_values, group in agg.groupby(KEY, sort=False, dropna=False, observed=True):
+    from tqdm.auto import tqdm
+    grouped = agg.groupby(KEY, sort=False, dropna=False, observed=True)
+    progress = tqdm(grouped, total=grouped.ngroups,
+                    desc="Phase 1/2: building monthly medicine series",
+                    unit="series", dynamic_ncols=True, mininterval=1.0)
+    for key_values, group in progress:
         group = group.sort_values("PERIOD").copy()
         months = pd.date_range(group["PERIOD"].min(), group["PERIOD"].max(), freq="MS")
         indexed = group.set_index("PERIOD").reindex(months)
@@ -210,8 +219,11 @@ def build_monthly_series(aggregated_path, series_path, cohort_path, diagnostics_
         ))
 
         if not included:
+            progress.set_postfix(retained=retained_series, excluded=len(cohort_rows), refresh=False)
             continue
         retained_series += 1
+        progress.set_postfix(retained=retained_series,
+                             excluded=len(cohort_rows) - retained_series, refresh=False)
         retained_missing_periods += missing_periods
         batch_frames.append(indexed)
         if len(batch_frames) >= batch_size:
@@ -321,7 +333,9 @@ def run_phase1_from_csv(source=None, output_root="output", processed_root="data/
     series_path = processed_root / "scmd_monthly_series.parquet"
     cohort_path = output_root / "tables" / "cohort_inclusion_report.csv"
     diagnostics_path = output_root / "phase1_diagnostics.json"
+    logger.info("Phase 1/2: DuckDB is scanning and aggregating the source CSV.")
     aggregate_scmd(source, aggregated)
+    logger.info("Phase 2/2: constructing the eligible monthly cohort.")
     return build_monthly_series(aggregated, series_path, cohort_path, diagnostics_path,
                                 min_periods=min_periods, min_nonzero=min_nonzero,
                                 train_frac=train_frac, val_frac=val_frac, test_frac=test_frac,
