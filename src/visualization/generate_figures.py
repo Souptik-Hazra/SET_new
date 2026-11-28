@@ -71,10 +71,9 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
 
     # 1. Observed SCMD quantity distribution: descriptive source-data view, not stock.
     try:
-        series = _read_parquet(root, "data/processed/scmd_monthly_series.parquet", ["PERIOD", "MODEL_DEMAND", "SPLIT", *KEYS])
-        if series is None or not {"PERIOD", "MODEL_DEMAND"}.issubset(series.columns):
+        frame = _read_parquet(root, "data/processed/scmd_monthly_series.parquet", ["PERIOD", "MODEL_DEMAND", "SPLIT", *KEYS])
+        if frame is None or not {"PERIOD", "MODEL_DEMAND"}.issubset(frame.columns):
             raise ValueError("monthly series artifact or required columns unavailable")
-        frame = series.copy()
         frame["PERIOD"] = pd.to_datetime(frame["PERIOD"])
         frame["MODEL_DEMAND"] = pd.to_numeric(frame["MODEL_DEMAND"], errors="coerce")
         frame = frame[(frame["SPLIT"] == "train") & frame["MODEL_DEMAND"].notna()] if "SPLIT" in frame else frame
@@ -91,7 +90,7 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
         ax.tick_params(axis="x", rotation=45)
         ax.grid(alpha=.25)
         generated.append(_finish(fig, fig_dir / "fig01_monthly_scmd_quantity.png", "Figure 1 — Observed SCMD demand distribution"))
-        del series, frame, per_series, monthly
+        del frame, per_series, monthly
     except Exception as exc:
         skipped["fig01_monthly_scmd_quantity.png"] = str(exc)
 
@@ -116,7 +115,8 @@ def generate_figures(project_root: str | Path | None = None) -> list[Path]:
 
     # 3. Test-split quantile interval for the same highest-volume available series.
     try:
-        forecasts = _read_parquet(root, "data/processed/forecasts.parquet", KEYS + ["PERIOD", "MODEL_DEMAND", "Q50", "Q10", "Q90", "SPLIT"])
+        if "forecasts" not in locals() or forecasts is None:
+            forecasts = _read_parquet(root, "data/processed/forecasts.parquet", KEYS + ["PERIOD", "MODEL_DEMAND", "Q50", "Q10", "Q90", "SPLIT"])
         required = set(KEYS + ["PERIOD", "MODEL_DEMAND", "Q10", "Q50", "Q90", "SPLIT"])
         if forecasts is None or not required.issubset(forecasts.columns):
             raise ValueError("forecast artifact missing Q10/Q50/Q90 columns")
